@@ -136,7 +136,7 @@
 
     function renderUsage(data) {
     document.querySelector("#usageText").textContent =
-        `${data.plan}: ${data.used} de ${data.limit} pedidos`;
+        `${data.tenant_id} | Plano ${data.plan}: ${data.used} de ${data.limit} pedidos`;
 
     const meter = document.querySelector("#meterFill");
     meter.style.width = `${Math.min(data.percentage, 100)}%`;
