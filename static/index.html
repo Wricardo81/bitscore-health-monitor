@@ -39,6 +39,36 @@
       font-weight: bold;
       cursor: pointer;
     }
+
+    .usage-card {
+    margin: 24px 0;
+    padding: 20px;
+    border-radius: 18px;
+    background: #0a192f;
+    }
+
+    .meter {
+    height: 14px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #233554;
+    }
+
+    .meter-fill {
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: #64ffda;
+    transition: width 0.3s ease;
+    }
+
+    .warning {
+    color: #ffd166;
+    }
+
+    .blocked {
+    color: #ff6b6b;
+    }
   </style>
 </head>
 
@@ -51,6 +81,20 @@
     <p id="service"></p>
     <p id="uptime"></p>
     <p id="requestId"></p>
+
+    <section class="usage-card">
+        <h2>Consumo do plano</h2>
+
+        <p id="usageText">Carregando...</p>
+
+        <div class="meter">
+            <div class="meter-fill" id="meterFill"></div>
+        </div>
+
+        <p id="usageAlert"></p>
+
+        <button id="consume">Simular novo pedido</button>
+    </section>
 
     <button id="refresh">Verificar novamente</button>
   </main>
@@ -89,6 +133,61 @@
       .addEventListener("click", checkHealth);
 
     checkHealth();
+
+    function renderUsage(data) {
+    document.querySelector("#usageText").textContent =
+        `${data.plan}: ${data.used} de ${data.limit} pedidos`;
+
+    const meter = document.querySelector("#meterFill");
+    meter.style.width = `${Math.min(data.percentage, 100)}%`;
+
+    const alert = document.querySelector("#usageAlert");
+    const button = document.querySelector("#consume");
+
+    alert.className = "";
+    button.disabled = false;
+
+    if (data.status === "blocked") {
+        alert.textContent = "Limite atingido — upgrade necessário.";
+        alert.className = "blocked";
+        meter.style.background = "#ff6b6b";
+        button.disabled = true;
+    } else if (data.percentage >= 80) {
+        alert.textContent = "Atenção: mais de 80% do plano utilizado.";
+        alert.className = "warning";
+        meter.style.background = "#ffd166";
+    } else {
+        alert.textContent = "Consumo dentro do limite.";
+        meter.style.background = "#64ffda";
+    }
+    }
+
+    async function loadUsage() {
+    const response = await fetch("/api/usage");
+    const data = await response.json();
+    renderUsage(data);
+    }
+
+    async function consumeUsage() {
+    const response = await fetch("/api/usage/consume", {
+        method: "POST"
+    });
+
+    const data = await response.json();
+
+    if (data.usage) {
+        renderUsage(data.usage);
+        return;
+    }
+
+    renderUsage(data);
+    }
+
+    document
+    .querySelector("#consume")
+    .addEventListener("click", consumeUsage);
+
+    loadUsage();
   </script>
 </body>
 </html>
