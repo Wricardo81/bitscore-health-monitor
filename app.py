@@ -77,6 +77,22 @@ def consume_usage(tenant_id):
 
     return result.rowcount == 1
 
+def create_tenant(tenant_id, plan, usage_limit):
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    try:
+        with connect_database() as connection:
+            connection.execute("""
+                INSERT INTO usage_counters
+                (tenant_id, plan, used, usage_limit, updated_at)
+                VALUES (?, ?, 0, ?, ?)
+            """, (tenant_id, plan, usage_limit, timestamp))
+
+        return get_usage(tenant_id)
+
+    except sqlite3.IntegrityError:
+        return None
+
 
 class SaaSHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -88,7 +104,10 @@ class SaaSHandler(SimpleHTTPRequestHandler):
         body = json.dumps(response).encode("utf-8")
 
         self.send_response(status_code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header(
+            "Content-Type",
+            "application/json; charset=utf-8",
+        )
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Request-ID", request_id)
         self.end_headers()
@@ -98,10 +117,29 @@ class SaaSHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
 
-        return parsed.path, query.get(
+        tenant_id = query.get(
             "tenant_id",
-            ["engenharia-de-bits"]
+            ["engenharia-de-bits"],
         )[0]
+
+        return parsed.path, tenant_id
+
+    def read_json(self):
+        try:
+            content_length = int(
+                self.headers.get("Content-Length", 0)
+            )
+
+            if content_length <= 0:
+                return None
+
+            body = self.rfile.read(content_length)
+            data = json.loads(body.decode("utf-8"))
+
+            return data if isinstance(data, dict) else None
+
+        except (ValueError, json.JSONDecodeError):
+            return None
 
     def do_GET(self):
         path, tenant_id = self.request_data()
@@ -110,8 +148,11 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             self.send_json(200, {
                 "status": "online",
                 "service": "BitsCore API",
-                "version": "1.2.0",
-                "uptime_seconds": round(time.time() - START_TIME, 2),
+                "version": "1.3.0",
+                "uptime_seconds": round(
+                    time.time() - START_TIME,
+                    2,
+                ),
             })
             return
 
@@ -119,7 +160,9 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             usage = get_usage(tenant_id)
 
             if usage is None:
-                self.send_json(404, {"error": "Empresa não encontrada"})
+                self.send_json(404, {
+                    "error": "Empresa n?o encontrada"
+                })
                 return
 
             self.send_json(200, usage)
@@ -130,24 +173,95 @@ class SaaSHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path, tenant_id = self.request_data()
 
-        if path != "/api/usage/consume":
-            self.send_json(404, {"error": "Endpoint não encontrado"})
-            return
+        if path == "/api/tenants":
+            data = self.read_json()
 
-        usage = get_usage(tenant_id)
+            if data is None:
+                self.send_json(400, {
+                    "error": "JSON inv?lido"
+                })
+                return
 
-        if usage is None:
-            self.send_json(404, {"error": "Empresa não encontrada"})
-            return
+            new_tenant_id = str(
+                data.get("tenant_id", "")
+            ).strip().lower()
 
-        if not consume_usage(tenant_id):
-            self.send_json(403, {
-                "error": "Limite do plano atingido",
-                "usage": get_usage(tenant_id),
+            plan = str(
+                data.get("plan", "")
+            ).strip()
+
+            try:
+                usage_limit = int(data.get("limit", 0))
+            except (TypeError, ValueError):
+                usage_limit = 0
+
+            valid_tenant_id = (
+                3 <= len(new_tenant_id) <= 50
+                and all(
+                    character.islower()
+                    or character.isdigit()
+                    or character == "-"
+                    for character in new_tenant_id
+                )
+            )
+
+            if not valid_tenant_id:
+                self.send_json(400, {
+                    "error": (
+                        "tenant_id deve usar letras min?sculas, "
+                        "n?meros ou h?fen"
+                    )
+                })
+                return
+
+            if not plan or usage_limit <= 0:
+                self.send_json(400, {
+                    "error": (
+                        "Plano e limite positivo s?o obrigat?rios"
+                    )
+                })
+                return
+
+            tenant = create_tenant(
+                new_tenant_id,
+                plan,
+                usage_limit,
+            )
+
+            if tenant is None:
+                self.send_json(409, {
+                    "error": "Empresa j? cadastrada"
+                })
+                return
+
+            self.send_json(201, {
+                "message": "Empresa cadastrada",
+                "tenant": tenant,
             })
             return
 
-        self.send_json(200, get_usage(tenant_id))
+        if path == "/api/usage/consume":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa n?o encontrada"
+                })
+                return
+
+            if not consume_usage(tenant_id):
+                self.send_json(403, {
+                    "error": "Limite do plano atingido",
+                    "usage": get_usage(tenant_id),
+                })
+                return
+
+            self.send_json(200, get_usage(tenant_id))
+            return
+
+        self.send_json(404, {
+            "error": "Endpoint n?o encontrado"
+        })
 
 
 initialize_database()
