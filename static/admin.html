@@ -1,0 +1,187 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Novo cliente | BitsCore</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #0a192f;
+      color: #fff;
+      font-family: Arial, sans-serif;
+    }
+
+    .panel {
+      width: min(480px, 100%);
+      padding: 32px;
+      border: 1px solid #64ffda;
+      border-radius: 24px;
+      background: #112240;
+    }
+
+    label {
+      display: block;
+      margin: 18px 0 6px;
+      color: #ccd6f6;
+    }
+
+    input, select, button {
+      width: 100%;
+      padding: 13px;
+      border-radius: 12px;
+      font-size: 1rem;
+    }
+
+    input, select {
+      border: 1px solid #233554;
+      background: #0a192f;
+      color: #fff;
+    }
+
+    button {
+      margin-top: 22px;
+      border: 0;
+      background: #64ffda;
+      color: #0a192f;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: wait;
+      opacity: .6;
+    }
+
+    #message {
+      min-height: 24px;
+      margin-top: 18px;
+    }
+
+    .success { color: #64ffda; }
+    .error { color: #ff6b6b; }
+
+    .tenant-result {
+      display: none;
+      margin-top: 22px;
+      padding: 18px;
+      border-radius: 16px;
+      background: #0a192f;
+    }
+  </style>
+</head>
+
+<body>
+  <main class="panel">
+    <p>Engenharia de Bits</p>
+    <h1>Cadastrar empresa</h1>
+
+    <form id="tenantForm">
+      <label for="tenantId">Identificador</label>
+      <input
+        id="tenantId"
+        pattern="[a-z0-9-]{3,50}"
+        placeholder="mercado-central"
+        required
+      >
+
+      <label for="plan">Plano</label>
+      <select id="plan" required>
+        <option value="Start">Start — 100 operações</option>
+        <option value="Growth">Growth — 500 operações</option>
+        <option value="Scale">Scale — 2000 operações</option>
+      </select>
+
+      <label for="limit">Limite mensal</label>
+      <input id="limit" type="number" min="1" value="100" required>
+
+      <button id="submitButton" type="submit">Cadastrar empresa</button>
+    </form>
+
+    <p id="message" role="status"></p>
+
+    <section class="tenant-result" id="tenantResult">
+      <strong id="resultTenant"></strong>
+      <p id="resultPlan"></p>
+      <p id="resultUsage"></p>
+    </section>
+  </main>
+
+  <script>
+    const form = document.querySelector("#tenantForm");
+    const plan = document.querySelector("#plan");
+    const limit = document.querySelector("#limit");
+    const message = document.querySelector("#message");
+    const button = document.querySelector("#submitButton");
+
+    const limits = {
+      Start: 100,
+      Growth: 500,
+      Scale: 2000
+    };
+
+    plan.addEventListener("change", () => {
+      limit.value = limits[plan.value];
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      message.textContent = "Cadastrando...";
+      message.className = "";
+      button.disabled = true;
+
+      const payload = {
+        tenant_id: document.querySelector("#tenantId").value,
+        plan: plan.value,
+        limit: Number(limit.value)
+      };
+
+      try {
+        const response = await fetch("/api/tenants", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || `Erro HTTP ${response.status}`);
+        }
+
+        message.textContent = data.message;
+        message.className = "success";
+
+        document.querySelector("#resultTenant").textContent =
+          data.tenant.tenant_id;
+
+        document.querySelector("#resultPlan").textContent =
+          `Plano: ${data.tenant.plan}`;
+
+        document.querySelector("#resultUsage").textContent =
+          `Consumo inicial: ${data.tenant.used} de ${data.tenant.limit}`;
+
+        document.querySelector("#tenantResult").style.display = "block";
+        form.reset();
+        limit.value = limits.Start;
+      } catch (error) {
+        message.textContent = error.message;
+        message.className = "error";
+        document.querySelector("#tenantResult").style.display = "none";
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
