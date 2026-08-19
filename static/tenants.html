@@ -1,0 +1,232 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Empresas | BitsCore Control Center</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 32px;
+      background: #0a192f;
+      color: #fff;
+      font-family: Arial, sans-serif;
+    }
+
+    main {
+      width: min(1000px, 100%);
+      margin: auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: end;
+      margin-bottom: 28px;
+    }
+
+    input {
+      width: min(340px, 100%);
+      padding: 13px;
+      border: 1px solid #233554;
+      border-radius: 12px;
+      background: #112240;
+      color: #fff;
+    }
+
+    .summary {
+      color: #8892b0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 18px;
+    }
+
+    .tenant {
+      padding: 22px;
+      border: 1px solid #233554;
+      border-radius: 20px;
+      background: #112240;
+    }
+
+    .tenant h2 {
+      margin-top: 0;
+      font-size: 1.15rem;
+    }
+
+    .meter {
+      height: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #233554;
+    }
+
+    .fill {
+      height: 100%;
+      border-radius: inherit;
+      background: #64ffda;
+    }
+
+    .warning .fill { background: #ffd166; }
+    .blocked .fill { background: #ff6b6b; }
+
+    .badge {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #0a192f;
+      color: #64ffda;
+      font-size: .8rem;
+    }
+
+    .blocked .badge { color: #ff6b6b; }
+
+    .empty, .error {
+      padding: 24px;
+      border-radius: 16px;
+      background: #112240;
+    }
+
+    .error { color: #ff6b6b; }
+
+    @media (max-width: 650px) {
+      body { padding: 20px; }
+      header { align-items: stretch; flex-direction: column; }
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <header>
+      <div>
+        <p>Engenharia de Bits</p>
+        <h1>Diretório de empresas</h1>
+        <p class="summary" id="summary">Carregando...</p>
+      </div>
+
+      <input
+        id="search"
+        type="search"
+        placeholder="Buscar empresa ou plano"
+        aria-label="Buscar empresa ou plano"
+      >
+    </header>
+
+    <section class="grid" id="tenantGrid"></section>
+  </main>
+
+  <script>
+    const grid = document.querySelector("#tenantGrid");
+    const summary = document.querySelector("#summary");
+    const search = document.querySelector("#search");
+
+    let tenants = [];
+
+    function createText(tag, value) {
+      const element = document.createElement(tag);
+      element.textContent = value;
+      return element;
+    }
+
+    function createTenantCard(tenant) {
+      const card = document.createElement("article");
+      card.className = "tenant";
+
+      if (tenant.status === "blocked") {
+        card.classList.add("blocked");
+      } else if (tenant.percentage >= 80) {
+        card.classList.add("warning");
+      }
+
+      card.appendChild(createText("h2", tenant.tenant_id));
+
+      const badge = createText(
+        "span",
+        `${tenant.plan} · ${tenant.status}`
+      );
+      badge.className = "badge";
+      card.appendChild(badge);
+
+      card.appendChild(createText(
+        "p",
+        `${tenant.used} de ${tenant.limit} operações`
+      ));
+
+      const meter = document.createElement("div");
+      meter.className = "meter";
+
+      const fill = document.createElement("div");
+      fill.className = "fill";
+      fill.style.width = `${Math.min(tenant.percentage, 100)}%`;
+
+      meter.appendChild(fill);
+      card.appendChild(meter);
+
+      card.appendChild(createText(
+        "p",
+        `${tenant.percentage}% utilizado`
+      ));
+
+      return card;
+    }
+
+    function render() {
+      const term = search.value.trim().toLowerCase();
+
+      const filtered = tenants.filter((tenant) =>
+        tenant.tenant_id.toLowerCase().includes(term) ||
+        tenant.plan.toLowerCase().includes(term)
+      );
+
+      grid.replaceChildren();
+
+      summary.textContent =
+        `${filtered.length} de ${tenants.length} empresas`;
+
+      if (filtered.length === 0) {
+        const empty = createText(
+          "p",
+          "Nenhuma empresa encontrada."
+        );
+        empty.className = "empty";
+        grid.appendChild(empty);
+        return;
+      }
+
+      filtered.forEach((tenant) => {
+        grid.appendChild(createTenantCard(tenant));
+      });
+    }
+
+    async function loadTenants() {
+      try {
+        const response = await fetch("/api/tenants");
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || `Erro HTTP ${response.status}`);
+        }
+
+        tenants = data.tenants;
+        render();
+      } catch (error) {
+        summary.textContent = "Falha ao carregar empresas";
+        const message = createText("p", error.message);
+        message.className = "error";
+        grid.replaceChildren(message);
+      }
+    }
+
+    search.addEventListener("input", render);
+    loadTenants();
+  </script>
+</body>
+</html>

@@ -77,6 +77,44 @@ def consume_usage(tenant_id):
 
     return result.rowcount == 1
 
+
+def list_tenants():
+    with connect_database() as connection:
+        rows = connection.execute("""
+            SELECT
+                tenant_id,
+                plan,
+                used,
+                usage_limit,
+                updated_at
+            FROM usage_counters
+            ORDER BY updated_at DESC
+        """).fetchall()
+
+    tenants = []
+
+    for row in rows:
+        percentage = round(
+            (row["used"] / row["usage_limit"]) * 100,
+            1,
+        )
+
+        tenants.append({
+            "tenant_id": row["tenant_id"],
+            "plan": row["plan"],
+            "used": row["used"],
+            "limit": row["usage_limit"],
+            "percentage": percentage,
+            "status": (
+                "blocked"
+                if row["used"] >= row["usage_limit"]
+                else "active"
+            ),
+            "updated_at": row["updated_at"],
+        })
+
+    return tenants
+
 def create_tenant(tenant_id, plan, usage_limit):
     timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -153,6 +191,16 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                     time.time() - START_TIME,
                     2,
                 ),
+            })
+            return
+
+
+        if path == "/api/tenants":
+            tenants = list_tenants()
+
+            self.send_json(200, {
+                "tenants": tenants,
+                "total": len(tenants),
             })
             return
 
