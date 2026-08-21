@@ -1,0 +1,197 @@
+﻿import json
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def available_port():
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        return server.getsockname()[1]
+
+
+class TenantApiTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp_directory = tempfile.TemporaryDirectory()
+        cls.port = available_port()
+        cls.base_url = f"http://127.0.0.1:{cls.port}"
+
+        environment = os.environ.copy()
+        environment["BITSCORE_PORT"] = str(cls.port)
+        environment["BITSCORE_DATABASE"] = str(
+            Path(cls.temp_directory.name) / "test.db"
+        )
+
+        cls.process = subprocess.Popen(
+            [sys.executable, "app.py"],
+            cwd=PROJECT_ROOT,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        for _ in range(50):
+            try:
+                status, _, _ = cls.request("/api/health")
+
+                if status == 200:
+                    return
+            except Exception:
+                time.sleep(0.1)
+
+        output = cls.process.stdout.read()
+        cls.process.terminate()
+
+        raise RuntimeError(
+            f"Servidor de teste não iniciou:\n{output}"
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.process.terminate()
+
+        try:
+            cls.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            cls.process.kill()
+            cls.process.wait(timeout=5)
+
+        cls.temp_directory.cleanup()
+
+    @classmethod
+    def request(cls, path, method="GET", payload=None):
+        body = None
+        headers = {}
+
+        if payload is not None:
+            body = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        request = Request(
+            cls.base_url + path,
+            data=body,
+            headers=headers,
+            method=method,
+        )
+
+        try:
+            response = urlopen(request, timeout=3)
+        except HTTPError as error:
+            response = error
+
+        raw_body = response.read().decode("utf-8")
+
+        return (
+            response.status,
+            json.loads(raw_body),
+            response.headers,
+        )
+
+    def create_tenant(self, tenant_id, plan="Start", limit=100):
+        return self.request(
+            "/api/tenants",
+            method="POST",
+            payload={
+                "tenant_id": tenant_id,
+                "plan": plan,
+                "limit": limit,
+            },
+        )
+
+    def test_health_has_request_id(self):
+        status, body, headers = self.request("/api/health")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "online")
+        self.assertIn("request_id", body)
+        self.assertEqual(
+            headers["X-Request-ID"],
+            body["request_id"],
+        )
+
+    def test_onboarding_rejects_duplicate(self):
+        status, body, _ = self.create_tenant(
+            "tenant-onboarding",
+            plan="Growth",
+            limit=500,
+        )
+
+        self.assertEqual(status, 201)
+        self.assertEqual(
+            body["tenant"]["tenant_id"],
+            "tenant-onboarding",
+        )
+        self.assertEqual(body["tenant"]["used"], 0)
+
+        duplicate_status, duplicate_body, _ = (
+            self.create_tenant(
+                "tenant-onboarding",
+                plan="Growth",
+                limit=500,
+            )
+        )
+
+        self.assertEqual(duplicate_status, 409)
+        self.assertEqual(
+            duplicate_body["error"],
+            "Empresa já cadastrada",
+        )
+
+    def test_directory_contains_created_tenant(self):
+        self.create_tenant(
+            "tenant-directory",
+            plan="Scale",
+            limit=2000,
+        )
+
+        status, body, _ = self.request("/api/tenants")
+
+        identifiers = {
+            tenant["tenant_id"]
+            for tenant in body["tenants"]
+        }
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body["total"],
+            len(body["tenants"]),
+        )
+        self.assertIn("tenant-directory", identifiers)
+        self.assertIn("request_id", body)
+
+    def test_usage_is_isolated_by_tenant(self):
+        self.create_tenant("tenant-alpha")
+        self.create_tenant("tenant-beta")
+
+        consume_status, _, _ = self.request(
+            "/api/usage/consume?tenant_id=tenant-alpha",
+            method="POST",
+        )
+
+        _, alpha, _ = self.request(
+            "/api/usage?tenant_id=tenant-alpha"
+        )
+
+        _, beta, _ = self.request(
+            "/api/usage?tenant_id=tenant-beta"
+        )
+
+        self.assertEqual(consume_status, 200)
+        self.assertEqual(alpha["used"], 1)
+        self.assertEqual(beta["used"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

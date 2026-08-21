@@ -2,11 +2,17 @@ from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 import json
+import os
 import sqlite3
 import time
 import uuid
 
-DATABASE = "bitscore.db"
+DATABASE = os.getenv(
+    "BITSCORE_DATABASE",
+    "bitscore.db",
+)
+HOST = os.getenv("BITSCORE_HOST", "127.0.0.1")
+PORT = int(os.getenv("BITSCORE_PORT", "8010"))
 START_TIME = time.time()
 
 
@@ -278,7 +284,7 @@ class SaaSHandler(SimpleHTTPRequestHandler):
 
             if tenant is None:
                 self.send_json(409, {
-                    "error": "Empresa j? cadastrada"
+                    "error": "Empresa já cadastrada"
                 })
                 return
 
@@ -312,8 +318,26 @@ class SaaSHandler(SimpleHTTPRequestHandler):
         })
 
 
-initialize_database()
+def run_server():
+    initialize_database()
 
-server = ThreadingHTTPServer(("127.0.0.1", 8010), SaaSHandler)
-print("BitsCore SaaS Monitor: http://localhost:8010")
-server.serve_forever()
+    server = ThreadingHTTPServer(
+        (HOST, PORT),
+        SaaSHandler,
+    )
+
+    print(
+        f"BitsCore SaaS Monitor: http://{HOST}:{PORT}",
+        flush=True,
+    )
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("Servidor encerrado.")
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    run_server()
