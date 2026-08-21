@@ -1,0 +1,36 @@
+﻿name: Python API Tests
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+      - "test/**"
+      - "ci/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  api-tests:
+    name: Validate multi-tenant API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Validate Python syntax
+        run: python -m py_compile app.py tests/test_tenant_api.py
+
+      - name: Run integration tests
+        run: python -m unittest discover -s tests -v
