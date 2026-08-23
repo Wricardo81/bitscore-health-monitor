@@ -262,5 +262,52 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def test_upgrade_changes_plan_and_limit(self):
+        self.create_tenant(
+            "tenant-plan-upgrade",
+            plan="Start",
+            limit=100,
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-plan-upgrade"
+            ),
+            method="POST",
+            payload={"plan": "Growth"},
+        )
+
+        tenant = body["tenant"]
+
+        self.assertEqual(status, 200)
+        self.assertEqual(tenant["plan"], "Growth")
+        self.assertEqual(tenant["limit"], 500)
+        self.assertEqual(tenant["used"], 0)
+        self.assertEqual(
+            tenant["recommended_plan"],
+            "Scale",
+        )
+
+    def test_upgrade_rejects_plan_skipping(self):
+        self.create_tenant(
+            "tenant-plan-skip",
+            plan="Start",
+            limit=100,
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-plan-skip"
+            ),
+            method="POST",
+            payload={"plan": "Scale"},
+        )
+
+        self.assertEqual(status, 400)
+        self.assertIn("Growth", body["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -95,6 +95,7 @@
         <p id="usageAlert"></p>
 
         <button id="consume">Simular novo pedido</button>
+        <button id="upgrade" hidden>Fazer upgrade</button>
     </section>
 
     <button id="refresh">Verificar novamente</button>
@@ -144,9 +145,12 @@
 
     const alert = document.querySelector("#usageAlert");
     const button = document.querySelector("#consume");
+    const upgradeButton = document.querySelector("#upgrade");
 
     alert.className = "";
     button.disabled = false;
+    upgradeButton.hidden = true;
+    upgradeButton.dataset.plan = "";
 
     if (data.alert_level === "blocked") {
         alert.textContent = "Limite atingido — upgrade necessário.";
@@ -156,6 +160,9 @@
         alert.className = "blocked";
         meter.style.background = "#ff6b6b";
         button.disabled = true;
+        upgradeButton.hidden = !data.recommended_plan;
+        upgradeButton.dataset.plan =
+            data.recommended_plan || "";
     } else if (data.alert_level === "warning") {
         alert.textContent = "Atenção: mais de 80% do plano utilizado.";
         if (data.recommended_plan) {
@@ -190,9 +197,51 @@
     renderUsage(data);
     }
 
+    async function upgradePlan() {
+    const button = document.querySelector("#upgrade");
+    const plan = button.dataset.plan;
+
+    if (!plan) {
+        return;
+    }
+
+    button.disabled = true;
+    button.textContent = "Atualizando...";
+
+    try {
+        const response = await fetch("/api/usage/upgrade", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ plan })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        renderUsage(data.tenant);
+    } catch (error) {
+        document.querySelector("#usageAlert").textContent =
+            `Falha no upgrade: ${error.message}`;
+    } finally {
+        button.disabled = false;
+        button.textContent = "Fazer upgrade";
+    }
+    }
+
     document
     .querySelector("#consume")
     .addEventListener("click", consumeUsage);
+
+    document
+    .querySelector("#upgrade")
+    .addEventListener("click", upgradePlan);
 
     loadUsage();
   </script>
