@@ -16,6 +16,13 @@ PORT = int(os.getenv("BITSCORE_PORT", "8010"))
 START_TIME = time.time()
 
 
+PLAN_LIMITS = {
+    "Start": 100,
+    "Growth": 500,
+    "Scale": 2000,
+}
+
+
 def connect_database():
     connection = sqlite3.connect(DATABASE)
     connection.row_factory = sqlite3.Row
@@ -143,6 +150,29 @@ def list_tenants():
         })
 
     return tenants
+
+
+def upgrade_tenant(tenant_id, new_plan):
+    timestamp = datetime.now(timezone.utc).isoformat()
+    new_limit = PLAN_LIMITS[new_plan]
+
+    with connect_database() as connection:
+        result = connection.execute("""
+            UPDATE usage_counters
+            SET plan = ?, usage_limit = ?, updated_at = ?
+            WHERE tenant_id = ?
+        """, (
+            new_plan,
+            new_limit,
+            timestamp,
+            tenant_id,
+        ))
+
+    if result.rowcount == 0:
+        return None
+
+    return get_usage(tenant_id)
+
 
 def create_tenant(tenant_id, plan, usage_limit):
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -314,6 +344,62 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             self.send_json(201, {
                 "message": "Empresa cadastrada",
                 "tenant": tenant,
+            })
+            return
+
+
+        if path == "/api/usage/upgrade":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada"
+                })
+                return
+
+            data = self.read_json()
+
+            if data is None:
+                self.send_json(400, {
+                    "error": "JSON invalido"
+                })
+                return
+
+            new_plan = str(
+                data.get("plan", "")
+            ).strip()
+
+            if new_plan not in PLAN_LIMITS:
+                self.send_json(400, {
+                    "error": "Plano invalido"
+                })
+                return
+
+            expected_plan = usage["recommended_plan"]
+
+            if expected_plan is None:
+                self.send_json(409, {
+                    "error": "Empresa ja esta no maior plano"
+                })
+                return
+
+            if new_plan != expected_plan:
+                self.send_json(400, {
+                    "error": (
+                        "Upgrade permitido apenas para "
+                        f"o plano {expected_plan}"
+                    )
+                })
+                return
+
+            upgraded = upgrade_tenant(
+                tenant_id,
+                new_plan,
+            )
+
+            self.send_json(200, {
+                "message": "Plano atualizado",
+                "tenant": upgraded,
             })
             return
 
