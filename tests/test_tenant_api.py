@@ -193,5 +193,74 @@ class TenantApiTests(unittest.TestCase):
         self.assertEqual(beta["used"], 0)
 
 
+    def test_usage_starts_without_upgrade_alert(self):
+        status, body, _ = self.create_tenant(
+            "tenant-alert-normal",
+            plan="Start",
+            limit=5,
+        )
+
+        self.assertEqual(status, 201)
+        self.assertEqual(body["tenant"]["alert_level"], "normal")
+        self.assertFalse(
+            body["tenant"]["upgrade_recommended"]
+        )
+        self.assertEqual(
+            body["tenant"]["recommended_plan"],
+            "Growth",
+        )
+
+    def test_usage_warns_and_blocks_at_plan_thresholds(self):
+        self.create_tenant(
+            "tenant-alert-threshold",
+            plan="Start",
+            limit=5,
+        )
+
+        endpoint = (
+            "/api/usage/consume"
+            "?tenant_id=tenant-alert-threshold"
+        )
+
+        for _ in range(4):
+            status, warning, _ = self.request(
+                endpoint,
+                method="POST",
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(warning["used"], 4)
+        self.assertEqual(warning["percentage"], 80.0)
+        self.assertEqual(warning["alert_level"], "warning")
+        self.assertTrue(warning["upgrade_recommended"])
+        self.assertEqual(
+            warning["recommended_plan"],
+            "Growth",
+        )
+
+        blocked_status, blocked, _ = self.request(
+            endpoint,
+            method="POST",
+        )
+
+        self.assertEqual(blocked_status, 200)
+        self.assertEqual(blocked["used"], 5)
+        self.assertEqual(blocked["percentage"], 100.0)
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["alert_level"], "blocked")
+        self.assertTrue(blocked["upgrade_recommended"])
+
+        denied_status, denied, _ = self.request(
+            endpoint,
+            method="POST",
+        )
+
+        self.assertEqual(denied_status, 403)
+        self.assertEqual(
+            denied["usage"]["alert_level"],
+            "blocked",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

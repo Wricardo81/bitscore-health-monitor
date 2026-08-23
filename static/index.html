@@ -148,13 +148,19 @@
     alert.className = "";
     button.disabled = false;
 
-    if (data.status === "blocked") {
+    if (data.alert_level === "blocked") {
         alert.textContent = "Limite atingido — upgrade necessário.";
+        if (data.recommended_plan) {
+            alert.textContent += ` Plano recomendado: ${data.recommended_plan}.`;
+        }
         alert.className = "blocked";
         meter.style.background = "#ff6b6b";
         button.disabled = true;
-    } else if (data.percentage >= 80) {
+    } else if (data.alert_level === "warning") {
         alert.textContent = "Atenção: mais de 80% do plano utilizado.";
+        if (data.recommended_plan) {
+            alert.textContent += ` Considere o plano ${data.recommended_plan}.`;
+        }
         alert.className = "warning";
         meter.style.background = "#ffd166";
     } else {

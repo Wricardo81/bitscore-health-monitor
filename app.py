@@ -47,6 +47,27 @@ def initialize_database():
         ))
 
 
+
+def usage_alert(percentage, plan):
+    next_plans = {
+        "Start": "Growth",
+        "Growth": "Scale",
+    }
+
+    if percentage >= 100:
+        level = "blocked"
+    elif percentage >= 80:
+        level = "warning"
+    else:
+        level = "normal"
+
+    return {
+        "alert_level": level,
+        "upgrade_recommended": level in {"warning", "blocked"},
+        "recommended_plan": next_plans.get(plan),
+    }
+
+
 def get_usage(tenant_id):
     with connect_database() as connection:
         row = connection.execute("""
@@ -66,6 +87,7 @@ def get_usage(tenant_id):
         "used": row["used"],
         "limit": row["usage_limit"],
         "percentage": percentage,
+        **usage_alert(percentage, row["plan"]),
         "status": "blocked" if row["used"] >= row["usage_limit"] else "active",
         "updated_at": row["updated_at"],
     }
@@ -111,6 +133,7 @@ def list_tenants():
             "used": row["used"],
             "limit": row["usage_limit"],
             "percentage": percentage,
+        **usage_alert(percentage, row["plan"]),
             "status": (
                 "blocked"
                 if row["used"] >= row["usage_limit"]
