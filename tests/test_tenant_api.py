@@ -309,5 +309,87 @@ class TenantApiTests(unittest.TestCase):
         self.assertIn("Growth", body["error"])
 
 
+    def test_upgrade_creates_subscription_audit_event(self):
+        self.create_tenant(
+            "tenant-audit-event",
+            plan="Start",
+            limit=100,
+        )
+
+        upgrade_status, _, _ = self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-audit-event"
+            ),
+            method="POST",
+            payload={"plan": "Growth"},
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-audit-event"
+            )
+        )
+
+        self.assertEqual(upgrade_status, 200)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total"], 1)
+
+        event = body["events"][0]
+
+        self.assertEqual(
+            event["tenant_id"],
+            "tenant-audit-event",
+        )
+        self.assertEqual(
+            event["event_type"],
+            "plan_upgraded",
+        )
+        self.assertEqual(
+            event["previous_plan"],
+            "Start",
+        )
+        self.assertEqual(
+            event["new_plan"],
+            "Growth",
+        )
+        self.assertEqual(event["previous_limit"], 100)
+        self.assertEqual(event["new_limit"], 500)
+        self.assertIn("created_at", event)
+
+    def test_subscription_audit_is_isolated_by_tenant(self):
+        self.create_tenant("tenant-audit-alpha")
+        self.create_tenant("tenant-audit-beta")
+
+        self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-audit-alpha"
+            ),
+            method="POST",
+            payload={"plan": "Growth"},
+        )
+
+        alpha_status, alpha, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-audit-alpha"
+            )
+        )
+
+        beta_status, beta, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-audit-beta"
+            )
+        )
+
+        self.assertEqual(alpha_status, 200)
+        self.assertEqual(beta_status, 200)
+        self.assertEqual(alpha["total"], 1)
+        self.assertEqual(beta["total"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

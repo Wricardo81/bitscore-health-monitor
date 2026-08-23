@@ -98,6 +98,14 @@
         <button id="upgrade" hidden>Fazer upgrade</button>
     </section>
 
+    <section class="usage-card">
+        <h2>Historico de assinatura</h2>
+        <p id="subscriptionAuditStatus">
+            Carregando historico...
+        </p>
+        <div id="subscriptionAuditList"></div>
+    </section>
+
     <button id="refresh">Verificar novamente</button>
   </main>
 
@@ -176,6 +184,59 @@
     }
     }
 
+    async function loadSubscriptionAudit() {
+    const status = document.querySelector(
+        "#subscriptionAuditStatus"
+    );
+
+    const list = document.querySelector(
+        "#subscriptionAuditList"
+    );
+
+    list.replaceChildren();
+
+    try {
+        const response = await fetch(
+            "/api/subscription/events"
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        if (data.total === 0) {
+            status.textContent =
+                "Nenhuma alteracao de plano registrada.";
+            return;
+        }
+
+        status.textContent =
+            `${data.total} alteracao(oes) registrada(s).`;
+
+        for (const event of data.events) {
+            const item = document.createElement("p");
+
+            const date = new Date(
+                event.created_at
+            ).toLocaleString("pt-BR");
+
+            item.textContent =
+                `${event.previous_plan} para ${event.new_plan}` +
+                ` | ${event.previous_limit} para` +
+                ` ${event.new_limit} pedidos | ${date}`;
+
+            list.appendChild(item);
+        }
+    } catch (error) {
+        status.textContent =
+            `Falha ao carregar historico: ${error.message}`;
+    }
+    }
+
     async function loadUsage() {
     const response = await fetch("/api/usage");
     const data = await response.json();
@@ -226,6 +287,7 @@
         }
 
         renderUsage(data.tenant);
+        await loadSubscriptionAudit();
     } catch (error) {
         document.querySelector("#usageAlert").textContent =
             `Falha no upgrade: ${error.message}`;
@@ -244,6 +306,7 @@
     .addEventListener("click", upgradePlan);
 
     loadUsage();
+    loadSubscriptionAudit();
   </script>
 </body>
 </html>
