@@ -42,6 +42,30 @@ def initialize_database():
         """)
 
         connection.execute("""
+            CREATE TABLE IF NOT EXISTS subscription_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                previous_plan TEXT NOT NULL,
+                new_plan TEXT NOT NULL,
+                previous_limit INTEGER NOT NULL,
+                new_limit INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (tenant_id)
+                    REFERENCES usage_counters (tenant_id)
+            )
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS
+                idx_subscription_events_tenant_created
+            ON subscription_events (
+                tenant_id,
+                created_at DESC
+            )
+        """)
+
+        connection.execute("""
             INSERT OR IGNORE INTO usage_counters
             (tenant_id, plan, used, usage_limit, updated_at)
             VALUES (?, ?, ?, ?, ?)
@@ -152,12 +176,53 @@ def list_tenants():
     return tenants
 
 
+def list_subscription_events(tenant_id):
+    with connect_database() as connection:
+        rows = connection.execute("""
+            SELECT
+                id,
+                tenant_id,
+                event_type,
+                previous_plan,
+                new_plan,
+                previous_limit,
+                new_limit,
+                created_at
+            FROM subscription_events
+            WHERE tenant_id = ?
+            ORDER BY created_at DESC, id DESC
+        """, (tenant_id,)).fetchall()
+
+    return [
+        {
+            "id": row["id"],
+            "tenant_id": row["tenant_id"],
+            "event_type": row["event_type"],
+            "previous_plan": row["previous_plan"],
+            "new_plan": row["new_plan"],
+            "previous_limit": row["previous_limit"],
+            "new_limit": row["new_limit"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
+
+
 def upgrade_tenant(tenant_id, new_plan):
     timestamp = datetime.now(timezone.utc).isoformat()
     new_limit = PLAN_LIMITS[new_plan]
 
     with connect_database() as connection:
-        result = connection.execute("""
+        current = connection.execute("""
+            SELECT plan, usage_limit
+            FROM usage_counters
+            WHERE tenant_id = ?
+        """, (tenant_id,)).fetchone()
+
+        if current is None:
+            return None
+
+        connection.execute("""
             UPDATE usage_counters
             SET plan = ?, usage_limit = ?, updated_at = ?
             WHERE tenant_id = ?
@@ -168,8 +233,26 @@ def upgrade_tenant(tenant_id, new_plan):
             tenant_id,
         ))
 
-    if result.rowcount == 0:
-        return None
+        connection.execute("""
+            INSERT INTO subscription_events (
+                tenant_id,
+                event_type,
+                previous_plan,
+                new_plan,
+                previous_limit,
+                new_limit,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            tenant_id,
+            "plan_upgraded",
+            current["plan"],
+            new_plan,
+            current["usage_limit"],
+            new_limit,
+            timestamp,
+        ))
 
     return get_usage(tenant_id)
 
@@ -260,6 +343,24 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             self.send_json(200, {
                 "tenants": tenants,
                 "total": len(tenants),
+            })
+            return
+
+        if path == "/api/subscription/events":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada"
+                })
+                return
+
+            events = list_subscription_events(tenant_id)
+
+            self.send_json(200, {
+                "tenant_id": tenant_id,
+                "events": events,
+                "total": len(events),
             })
             return
 
