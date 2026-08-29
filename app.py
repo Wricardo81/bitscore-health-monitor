@@ -50,11 +50,34 @@ def initialize_database():
                 new_plan TEXT NOT NULL,
                 previous_limit INTEGER NOT NULL,
                 new_limit INTEGER NOT NULL,
+                actor_type TEXT NOT NULL DEFAULT 'system',
+                actor_id TEXT NOT NULL DEFAULT 'legacy',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (tenant_id)
                     REFERENCES usage_counters (tenant_id)
             )
         """)
+
+        event_columns = {
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(subscription_events)"
+            ).fetchall()
+        }
+
+        if "actor_type" not in event_columns:
+            connection.execute("""
+                ALTER TABLE subscription_events
+                ADD COLUMN actor_type TEXT
+                NOT NULL DEFAULT 'system'
+            """)
+
+        if "actor_id" not in event_columns:
+            connection.execute("""
+                ALTER TABLE subscription_events
+                ADD COLUMN actor_id TEXT
+                NOT NULL DEFAULT 'legacy'
+            """)
 
         connection.execute("""
             CREATE INDEX IF NOT EXISTS
@@ -187,6 +210,8 @@ def list_subscription_events(tenant_id):
                 new_plan,
                 previous_limit,
                 new_limit,
+                actor_type,
+                actor_id,
                 created_at
             FROM subscription_events
             WHERE tenant_id = ?
@@ -202,13 +227,20 @@ def list_subscription_events(tenant_id):
             "new_plan": row["new_plan"],
             "previous_limit": row["previous_limit"],
             "new_limit": row["new_limit"],
+            "actor_type": row["actor_type"],
+            "actor_id": row["actor_id"],
             "created_at": row["created_at"],
         }
         for row in rows
     ]
 
 
-def upgrade_tenant(tenant_id, new_plan):
+def upgrade_tenant(
+    tenant_id,
+    new_plan,
+    actor_type,
+    actor_id,
+):
     timestamp = datetime.now(timezone.utc).isoformat()
     new_limit = PLAN_LIMITS[new_plan]
 
@@ -241,9 +273,11 @@ def upgrade_tenant(tenant_id, new_plan):
                 new_plan,
                 previous_limit,
                 new_limit,
+                actor_type,
+                actor_id,
                 created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             tenant_id,
             "plan_upgraded",
@@ -251,6 +285,8 @@ def upgrade_tenant(tenant_id, new_plan):
             new_plan,
             current["usage_limit"],
             new_limit,
+            actor_type,
+            actor_id,
             timestamp,
         ))
 
@@ -493,9 +529,40 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 })
                 return
 
+            actor_type = str(
+                data.get("actor_type", "customer")
+            ).strip().lower()
+
+            actor_id = str(
+                data.get("actor_id", "self-service-api")
+            ).strip()
+
+            valid_actor_types = {
+                "customer",
+                "admin",
+                "system",
+            }
+
+            if actor_type not in valid_actor_types:
+                self.send_json(400, {
+                    "error": "Tipo de responsavel invalido"
+                })
+                return
+
+            if not actor_id or len(actor_id) > 100:
+                self.send_json(400, {
+                    "error": (
+                        "Identificador do responsavel "
+                        "deve ter entre 1 e 100 caracteres"
+                    )
+                })
+                return
+
             upgraded = upgrade_tenant(
                 tenant_id,
                 new_plan,
+                actor_type,
+                actor_id,
             )
 
             self.send_json(200, {

@@ -322,7 +322,11 @@ class TenantApiTests(unittest.TestCase):
                 "?tenant_id=tenant-audit-event"
             ),
             method="POST",
-            payload={"plan": "Growth"},
+            payload={
+                "plan": "Growth",
+                "actor_type": "admin",
+                "actor_id": "wildson-ricardo",
+            },
         )
 
         status, body, _ = self.request(
@@ -356,6 +360,11 @@ class TenantApiTests(unittest.TestCase):
         )
         self.assertEqual(event["previous_limit"], 100)
         self.assertEqual(event["new_limit"], 500)
+        self.assertEqual(event["actor_type"], "admin")
+        self.assertEqual(
+            event["actor_id"],
+            "wildson-ricardo",
+        )
         self.assertIn("created_at", event)
 
     def test_subscription_audit_is_isolated_by_tenant(self):
@@ -389,6 +398,42 @@ class TenantApiTests(unittest.TestCase):
         self.assertEqual(beta_status, 200)
         self.assertEqual(alpha["total"], 1)
         self.assertEqual(beta["total"], 0)
+
+
+    def test_upgrade_rejects_invalid_actor_type(self):
+        self.create_tenant(
+            "tenant-invalid-actor",
+            plan="Start",
+            limit=100,
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-invalid-actor"
+            ),
+            method="POST",
+            payload={
+                "plan": "Growth",
+                "actor_type": "unknown",
+                "actor_id": "invalid-user",
+            },
+        )
+
+        self.assertEqual(status, 400)
+        self.assertEqual(
+            body["error"],
+            "Tipo de responsavel invalido",
+        )
+
+        _, audit, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-invalid-actor"
+            )
+        )
+
+        self.assertEqual(audit["total"], 0)
 
 
 if __name__ == "__main__":
