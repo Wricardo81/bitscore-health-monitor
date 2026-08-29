@@ -38,7 +38,7 @@ class TenantApiTests(unittest.TestCase):
             [sys.executable, "app.py"],
             cwd=PROJECT_ROOT,
             env=environment,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
             text=True,
         )
@@ -52,7 +52,7 @@ class TenantApiTests(unittest.TestCase):
             except Exception:
                 time.sleep(0.1)
 
-        output = cls.process.stdout.read()
+        output = ""
         cls.process.terminate()
 
         raise RuntimeError(
@@ -512,6 +512,189 @@ class TenantApiTests(unittest.TestCase):
         self.assertEqual(beta["used"], 1)
         self.assertFalse(alpha["idempotent_replay"])
         self.assertFalse(beta["idempotent_replay"])
+
+
+    def create_two_subscription_events(self, tenant_id):
+        self.create_tenant(
+            tenant_id,
+            plan="Start",
+            limit=100,
+        )
+
+        first_status, _, _ = self.request(
+            (
+                "/api/usage/upgrade"
+                f"?tenant_id={tenant_id}"
+            ),
+            method="POST",
+            payload={"plan": "Growth"},
+        )
+
+        second_status, _, _ = self.request(
+            (
+                "/api/usage/upgrade"
+                f"?tenant_id={tenant_id}"
+            ),
+            method="POST",
+            payload={"plan": "Scale"},
+        )
+
+        self.assertEqual(first_status, 200)
+        self.assertEqual(second_status, 200)
+
+    def test_subscription_events_uses_default_pagination(self):
+        self.create_tenant("tenant-page-default")
+
+        self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-page-default"
+            ),
+            method="POST",
+            payload={"plan": "Growth"},
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-page-default"
+            )
+        )
+
+        pagination = body["pagination"]
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(pagination["limit"], 10)
+        self.assertEqual(pagination["offset"], 0)
+        self.assertEqual(pagination["returned"], 1)
+        self.assertEqual(pagination["total"], 1)
+        self.assertFalse(pagination["has_more"])
+        self.assertIsNone(pagination["next_offset"])
+
+    def test_subscription_events_returns_next_page(self):
+        self.create_two_subscription_events(
+            "tenant-page-next"
+        )
+
+        first_status, first, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-page-next"
+                "&limit=1&offset=0"
+            )
+        )
+
+        second_status, second, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-page-next"
+                "&limit=1&offset=1"
+            )
+        )
+
+        self.assertEqual(first_status, 200)
+        self.assertEqual(second_status, 200)
+
+        self.assertEqual(first["total"], 2)
+        self.assertEqual(len(first["events"]), 1)
+        self.assertTrue(
+            first["pagination"]["has_more"]
+        )
+        self.assertEqual(
+            first["pagination"]["next_offset"],
+            1,
+        )
+
+        self.assertEqual(second["total"], 2)
+        self.assertEqual(len(second["events"]), 1)
+        self.assertFalse(
+            second["pagination"]["has_more"]
+        )
+        self.assertIsNone(
+            second["pagination"]["next_offset"]
+        )
+
+        self.assertNotEqual(
+            first["events"][0]["id"],
+            second["events"][0]["id"],
+        )
+
+    def test_subscription_events_rejects_invalid_pagination(self):
+        self.create_tenant("tenant-page-invalid")
+
+        invalid_queries = [
+            "limit=0&offset=0",
+            "limit=51&offset=0",
+            "limit=abc&offset=0",
+            "limit=10&offset=-1",
+        ]
+
+        for query in invalid_queries:
+            with self.subTest(query=query):
+                status, body, _ = self.request(
+                    (
+                        "/api/subscription/events"
+                        "?tenant_id=tenant-page-invalid"
+                        f"&{query}"
+                    )
+                )
+
+                self.assertEqual(status, 400)
+                self.assertIn(
+                    "Paginacao",
+                    body["error"].capitalize(),
+                )
+
+    def test_subscription_pagination_remains_tenant_isolated(self):
+        self.create_two_subscription_events(
+            "tenant-page-alpha"
+        )
+
+        self.create_tenant("tenant-page-beta")
+
+        self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-page-beta"
+            ),
+            method="POST",
+            payload={"plan": "Growth"},
+        )
+
+        _, alpha, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-page-alpha"
+                "&limit=1&offset=0"
+            )
+        )
+
+        _, beta, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-page-beta"
+                "&limit=1&offset=0"
+            )
+        )
+
+        self.assertEqual(
+            alpha["pagination"]["total"],
+            2,
+        )
+        self.assertEqual(
+            beta["pagination"]["total"],
+            1,
+        )
+
+        self.assertEqual(
+            alpha["events"][0]["tenant_id"],
+            "tenant-page-alpha",
+        )
+        self.assertEqual(
+            beta["events"][0]["tenant_id"],
+            "tenant-page-beta",
+        )
 
 
 if __name__ == "__main__":
