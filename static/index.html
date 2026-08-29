@@ -246,8 +246,13 @@
     }
 
     async function consumeUsage() {
+    const idempotencyKey = crypto.randomUUID();
+
     const response = await fetch("/api/usage/consume", {
-        method: "POST"
+        method: "POST",
+        headers: {
+            "Idempotency-Key": idempotencyKey
+        }
     });
 
     const data = await response.json();

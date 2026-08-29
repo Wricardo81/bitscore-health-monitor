@@ -1,4 +1,4 @@
-﻿import json
+import json
 import os
 from pathlib import Path
 import socket
@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+import uuid
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -71,18 +72,24 @@ class TenantApiTests(unittest.TestCase):
         cls.temp_directory.cleanup()
 
     @classmethod
-    def request(cls, path, method="GET", payload=None):
+    def request(
+        cls,
+        path,
+        method="GET",
+        payload=None,
+        headers=None,
+    ):
         body = None
-        headers = {}
+        request_headers = dict(headers or {})
 
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
+            request_headers["Content-Type"] = "application/json"
 
         request = Request(
             cls.base_url + path,
             data=body,
-            headers=headers,
+            headers=request_headers,
             method=method,
         )
 
@@ -107,6 +114,17 @@ class TenantApiTests(unittest.TestCase):
                 "tenant_id": tenant_id,
                 "plan": plan,
                 "limit": limit,
+            },
+        )
+
+    def consume(self, path, idempotency_key=None):
+        return self.request(
+            path,
+            method="POST",
+            headers={
+                "Idempotency-Key": (
+                    idempotency_key or str(uuid.uuid4())
+                )
             },
         )
 
@@ -175,9 +193,8 @@ class TenantApiTests(unittest.TestCase):
         self.create_tenant("tenant-alpha")
         self.create_tenant("tenant-beta")
 
-        consume_status, _, _ = self.request(
-            "/api/usage/consume?tenant_id=tenant-alpha",
-            method="POST",
+        consume_status, _, _ = self.consume(
+            "/api/usage/consume?tenant_id=tenant-alpha"
         )
 
         _, alpha, _ = self.request(
@@ -223,9 +240,8 @@ class TenantApiTests(unittest.TestCase):
         )
 
         for _ in range(4):
-            status, warning, _ = self.request(
-                endpoint,
-                method="POST",
+            status, warning, _ = self.consume(
+                endpoint
             )
 
         self.assertEqual(status, 200)
@@ -238,9 +254,8 @@ class TenantApiTests(unittest.TestCase):
             "Growth",
         )
 
-        blocked_status, blocked, _ = self.request(
-            endpoint,
-            method="POST",
+        blocked_status, blocked, _ = self.consume(
+            endpoint
         )
 
         self.assertEqual(blocked_status, 200)
@@ -250,9 +265,8 @@ class TenantApiTests(unittest.TestCase):
         self.assertEqual(blocked["alert_level"], "blocked")
         self.assertTrue(blocked["upgrade_recommended"])
 
-        denied_status, denied, _ = self.request(
-            endpoint,
-            method="POST",
+        denied_status, denied, _ = self.consume(
+            endpoint
         )
 
         self.assertEqual(denied_status, 403)
@@ -434,6 +448,70 @@ class TenantApiTests(unittest.TestCase):
         )
 
         self.assertEqual(audit["total"], 0)
+
+
+    def test_consume_requires_idempotency_key(self):
+        self.create_tenant("tenant-key-required")
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/consume"
+                "?tenant_id=tenant-key-required"
+            ),
+            method="POST",
+        )
+
+        self.assertEqual(status, 400)
+        self.assertIn("Idempotency-Key", body["error"])
+
+    def test_repeated_key_does_not_duplicate_usage(self):
+        self.create_tenant("tenant-idempotent")
+        endpoint = (
+            "/api/usage/consume"
+            "?tenant_id=tenant-idempotent"
+        )
+        key = "same-operation-key"
+
+        first_status, first, _ = self.consume(
+            endpoint,
+            key,
+        )
+        second_status, second, _ = self.consume(
+            endpoint,
+            key,
+        )
+
+        self.assertEqual(first_status, 200)
+        self.assertEqual(second_status, 200)
+        self.assertEqual(first["used"], 1)
+        self.assertEqual(second["used"], 1)
+        self.assertFalse(first["idempotent_replay"])
+        self.assertTrue(second["idempotent_replay"])
+
+    def test_idempotency_key_is_isolated_by_tenant(self):
+        self.create_tenant("tenant-key-alpha")
+        self.create_tenant("tenant-key-beta")
+        key = "shared-key"
+
+        _, alpha, _ = self.consume(
+            (
+                "/api/usage/consume"
+                "?tenant_id=tenant-key-alpha"
+            ),
+            key,
+        )
+        _, beta, _ = self.consume(
+            (
+                "/api/usage/consume"
+                "?tenant_id=tenant-key-beta"
+            ),
+            key,
+        )
+
+        self.assertEqual(alpha["used"], 1)
+        self.assertEqual(beta["used"], 1)
+        self.assertFalse(alpha["idempotent_replay"])
+        self.assertFalse(beta["idempotent_replay"])
 
 
 if __name__ == "__main__":
