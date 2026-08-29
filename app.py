@@ -283,7 +283,11 @@ def list_tenants():
     return tenants
 
 
-def list_subscription_events(tenant_id):
+def list_subscription_events(
+    tenant_id,
+    limit=10,
+    offset=0,
+):
     with connect_database() as connection:
         rows = connection.execute("""
             SELECT
@@ -300,9 +304,20 @@ def list_subscription_events(tenant_id):
             FROM subscription_events
             WHERE tenant_id = ?
             ORDER BY created_at DESC, id DESC
-        """, (tenant_id,)).fetchall()
+            LIMIT ? OFFSET ?
+        """, (
+            tenant_id,
+            limit,
+            offset,
+        )).fetchall()
 
-    return [
+        total = connection.execute("""
+            SELECT COUNT(*) AS total
+            FROM subscription_events
+            WHERE tenant_id = ?
+        """, (tenant_id,)).fetchone()["total"]
+
+    events = [
         {
             "id": row["id"],
             "tenant_id": row["tenant_id"],
@@ -317,6 +332,8 @@ def list_subscription_events(tenant_id):
         }
         for row in rows
     ]
+
+    return events, total
 
 
 def upgrade_tenant(
@@ -475,12 +492,65 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 })
                 return
 
-            events = list_subscription_events(tenant_id)
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            try:
+                limit = int(
+                    query.get("limit", ["10"])[0]
+                )
+                offset = int(
+                    query.get("offset", ["0"])[0]
+                )
+            except (TypeError, ValueError):
+                self.send_json(400, {
+                    "error": "Paginacao invalida"
+                })
+                return
+
+            if (
+                limit < 1
+                or limit > 50
+                or offset < 0
+            ):
+                self.send_json(400, {
+                    "error": (
+                        "Paginacao invalida: limit deve estar "
+                        "entre 1 e 50 e offset deve ser "
+                        "maior ou igual a 0"
+                    )
+                })
+                return
+
+            events, total = list_subscription_events(
+                tenant_id,
+                limit,
+                offset,
+            )
+
+            has_more = (
+                offset + len(events) < total
+            )
+
+            next_offset = (
+                offset + len(events)
+                if has_more
+                else None
+            )
 
             self.send_json(200, {
                 "tenant_id": tenant_id,
                 "events": events,
-                "total": len(events),
+                "total": total,
+                "pagination": {
+                    "limit": limit,
+                    "offset": offset,
+                    "returned": len(events),
+                    "total": total,
+                    "has_more": has_more,
+                    "next_offset": next_offset,
+                },
             })
             return
 

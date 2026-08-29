@@ -104,6 +104,13 @@
             Carregando historico...
         </p>
         <div id="subscriptionAuditList"></div>
+        <button
+            id="loadMoreAudit"
+            type="button"
+            hidden
+        >
+            Carregar mais
+        </button>
     </section>
 
     <button id="refresh">Verificar novamente</button>
@@ -184,7 +191,10 @@
     }
     }
 
-    async function loadSubscriptionAudit() {
+    let auditOffset = 0;
+    const auditLimit = 10;
+
+    async function loadSubscriptionAudit(reset = true) {
     const status = document.querySelector(
         "#subscriptionAuditStatus"
     );
@@ -193,11 +203,22 @@
         "#subscriptionAuditList"
     );
 
-    list.replaceChildren();
+    const loadMoreButton = document.querySelector(
+        "#loadMoreAudit"
+    );
+
+    if (reset) {
+        auditOffset = 0;
+        list.replaceChildren();
+        loadMoreButton.hidden = true;
+    }
+
+    loadMoreButton.disabled = true;
 
     try {
         const response = await fetch(
-            "/api/subscription/events"
+            "/api/subscription/events" +
+            `?limit=${auditLimit}&offset=${auditOffset}`
         );
 
         const data = await response.json();
@@ -208,17 +229,20 @@
             );
         }
 
-        if (data.total === 0) {
+        if (data.pagination.total === 0) {
             status.textContent =
                 "Nenhuma alteracao de plano registrada.";
+            loadMoreButton.hidden = true;
             return;
         }
 
         status.textContent =
-            `${data.total} alteracao(oes) registrada(s).`;
+            `${data.pagination.total}` +
+            " alteracao(oes) registrada(s).";
 
         for (const event of data.events) {
             const item = document.createElement("p");
+            item.dataset.eventId = event.id;
 
             const date = new Date(
                 event.created_at
@@ -233,11 +257,30 @@
 
             list.appendChild(item);
         }
+
+        loadMoreButton.hidden =
+            !data.pagination.has_more;
+
+        if (
+            data.pagination.next_offset !== null
+        ) {
+            auditOffset =
+                data.pagination.next_offset;
+        }
     } catch (error) {
         status.textContent =
             `Falha ao carregar historico: ${error.message}`;
+        loadMoreButton.hidden = true;
+    } finally {
+        loadMoreButton.disabled = false;
     }
     }
+
+    document
+    .querySelector("#loadMoreAudit")
+    .addEventListener("click", () => {
+        loadSubscriptionAudit(false);
+    });
 
     async function loadUsage() {
     const response = await fetch("/api/usage");
