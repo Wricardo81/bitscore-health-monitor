@@ -227,7 +227,9 @@
             item.textContent =
                 `${event.previous_plan} para ${event.new_plan}` +
                 ` | ${event.previous_limit} para` +
-                ` ${event.new_limit} pedidos | ${date}`;
+                ` ${event.new_limit} pedidos` +
+                ` | ${event.actor_type}: ${event.actor_id}` +
+                ` | ${date}`;
 
             list.appendChild(item);
         }
@@ -275,7 +277,11 @@
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({ plan })
+            body: JSON.stringify({
+                plan,
+                actor_type: "customer",
+                actor_id: "self-service-dashboard"
+            })
         });
 
         const data = await response.json();
