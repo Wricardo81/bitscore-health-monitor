@@ -42,6 +42,18 @@ def initialize_database():
         """)
 
         connection.execute("""
+            CREATE TABLE IF NOT EXISTS idempotency_records (
+                tenant_id TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                response_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, idempotency_key),
+                FOREIGN KEY (tenant_id)
+                    REFERENCES usage_counters (tenant_id)
+            )
+        """)
+
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS subscription_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tenant_id TEXT NOT NULL,
@@ -147,17 +159,89 @@ def get_usage(tenant_id):
     }
 
 
-def consume_usage(tenant_id):
+def consume_usage(tenant_id, idempotency_key):
     timestamp = datetime.now(timezone.utc).isoformat()
 
     with connect_database() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+
+        stored = connection.execute("""
+            SELECT response_json
+            FROM idempotency_records
+            WHERE tenant_id = ? AND idempotency_key = ?
+        """, (
+            tenant_id,
+            idempotency_key,
+        )).fetchone()
+
+        if stored is not None:
+            return {
+                "status": "replay",
+                "usage": json.loads(
+                    stored["response_json"]
+                ),
+            }
+
         result = connection.execute("""
             UPDATE usage_counters
             SET used = used + 1, updated_at = ?
             WHERE tenant_id = ? AND used < usage_limit
-        """, (timestamp, tenant_id))
+        """, (
+            timestamp,
+            tenant_id,
+        ))
 
-    return result.rowcount == 1
+        if result.rowcount != 1:
+            return {
+                "status": "blocked",
+                "usage": None,
+            }
+
+        row = connection.execute("""
+            SELECT tenant_id, plan, used, usage_limit, updated_at
+            FROM usage_counters
+            WHERE tenant_id = ?
+        """, (tenant_id,)).fetchone()
+
+        percentage = round(
+            (row["used"] / row["usage_limit"]) * 100,
+            1,
+        )
+
+        usage = {
+            "tenant_id": row["tenant_id"],
+            "plan": row["plan"],
+            "used": row["used"],
+            "limit": row["usage_limit"],
+            "percentage": percentage,
+            **usage_alert(percentage, row["plan"]),
+            "status": (
+                "blocked"
+                if row["used"] >= row["usage_limit"]
+                else "active"
+            ),
+            "updated_at": row["updated_at"],
+        }
+
+        connection.execute("""
+            INSERT INTO idempotency_records (
+                tenant_id,
+                idempotency_key,
+                response_json,
+                created_at
+            )
+            VALUES (?, ?, ?, ?)
+        """, (
+            tenant_id,
+            idempotency_key,
+            json.dumps(usage),
+            timestamp,
+        ))
+
+    return {
+        "status": "consumed",
+        "usage": usage,
+    }
 
 
 def list_tenants():
@@ -580,14 +664,41 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 })
                 return
 
-            if not consume_usage(tenant_id):
+            idempotency_key = self.headers.get(
+                "Idempotency-Key",
+                "",
+            ).strip()
+
+            if (
+                not idempotency_key
+                or len(idempotency_key) > 100
+            ):
+                self.send_json(400, {
+                    "error": (
+                        "Idempotency-Key deve ter "
+                        "entre 1 e 100 caracteres"
+                    )
+                })
+                return
+
+            result = consume_usage(
+                tenant_id,
+                idempotency_key,
+            )
+
+            if result["status"] == "blocked":
                 self.send_json(403, {
                     "error": "Limite do plano atingido",
                     "usage": get_usage(tenant_id),
                 })
                 return
 
-            self.send_json(200, get_usage(tenant_id))
+            self.send_json(200, {
+                **result["usage"],
+                "idempotent_replay": (
+                    result["status"] == "replay"
+                ),
+            })
             return
 
         self.send_json(404, {
