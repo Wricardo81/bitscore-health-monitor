@@ -98,12 +98,37 @@ class TenantApiTests(unittest.TestCase):
         except HTTPError as error:
             response = error
 
-        raw_body = response.read().decode("utf-8")
+        try:
+            status = response.status
+            response_headers = response.headers
+            raw_body = response.read().decode("utf-8")
+        finally:
+            response.close()
 
         return (
-            response.status,
+            status,
             json.loads(raw_body),
-            response.headers,
+            response_headers,
+        )
+
+    @classmethod
+    def request_text(cls, path):
+        response = urlopen(
+            cls.base_url + path,
+            timeout=3,
+        )
+
+        try:
+            status = response.status
+            response_headers = response.headers
+            content = response.read().decode("utf-8-sig")
+        finally:
+            response.close()
+
+        return (
+            status,
+            content,
+            response_headers,
         )
 
     def create_tenant(self, tenant_id, plan="Start", limit=100):
@@ -694,6 +719,83 @@ class TenantApiTests(unittest.TestCase):
         self.assertEqual(
             beta["events"][0]["tenant_id"],
             "tenant-page-beta",
+        )
+
+
+    def test_subscription_events_can_be_exported_as_csv(self):
+        self.create_tenant("tenant-export")
+
+        upgrade_status, _, _ = self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-export"
+            ),
+            method="POST",
+            payload={"plan": "Growth"},
+        )
+
+        status, content, headers = self.request_text(
+            (
+                "/api/subscription/events/export"
+                "?tenant_id=tenant-export"
+            )
+        )
+
+        self.assertEqual(upgrade_status, 200)
+        self.assertEqual(status, 200)
+        self.assertIn(
+            "text/csv",
+            headers["Content-Type"],
+        )
+        self.assertIn(
+            "subscription-events-tenant-export.csv",
+            headers["Content-Disposition"],
+        )
+        self.assertIn(
+            "X-Request-ID",
+            headers,
+        )
+        self.assertIn(
+            "tenant_id,event_type",
+            content,
+        )
+        self.assertIn(
+            "tenant-export",
+            content,
+        )
+        self.assertIn(
+            "plan_upgraded",
+            content,
+        )
+
+    def test_csv_export_remains_tenant_isolated(self):
+        self.create_tenant("tenant-export-alpha")
+        self.create_tenant("tenant-export-beta")
+
+        self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-export-alpha"
+            ),
+            method="POST",
+            payload={"plan": "Growth"},
+        )
+
+        status, content, _ = self.request_text(
+            (
+                "/api/subscription/events/export"
+                "?tenant_id=tenant-export-beta"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertNotIn(
+            "tenant-export-alpha",
+            content,
+        )
+        self.assertIn(
+            "tenant_id,event_type",
+            content,
         )
 
 

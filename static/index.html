@@ -111,6 +111,13 @@
         >
             Carregar mais
         </button>
+
+        <button
+            id="exportAudit"
+            type="button"
+        >
+            Exportar CSV
+        </button>
     </section>
 
     <button id="refresh">Verificar novamente</button>
@@ -281,6 +288,18 @@
     .addEventListener("click", () => {
         loadSubscriptionAudit(false);
     });
+
+    function exportSubscriptionAudit() {
+        window.location.href =
+            "/api/subscription/events/export";
+    }
+
+    document
+    .querySelector("#exportAudit")
+    .addEventListener(
+        "click",
+        exportSubscriptionAudit
+    );
 
     async function loadUsage() {
     const response = await fetch("/api/usage");
