@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+import csv
+import io
 import json
 import os
 import sqlite3
@@ -430,6 +432,30 @@ class SaaSHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_csv(self, filename, content):
+        request_id = str(uuid.uuid4())
+        body = content.encode("utf-8-sig")
+
+        self.send_response(200)
+        self.send_header(
+            "Content-Type",
+            "text/csv; charset=utf-8",
+        )
+        self.send_header(
+            "Content-Disposition",
+            f'attachment; filename="{filename}"',
+        )
+        self.send_header(
+            "Content-Length",
+            str(len(body)),
+        )
+        self.send_header(
+            "X-Request-ID",
+            request_id,
+        )
+        self.end_headers()
+        self.wfile.write(body)
+
     def request_data(self):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
@@ -481,6 +507,67 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 "tenants": tenants,
                 "total": len(tenants),
             })
+            return
+
+        if path == "/api/subscription/events/export":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            events = []
+            offset = 0
+            page_size = 50
+
+            while True:
+                batch, total = list_subscription_events(
+                    tenant_id,
+                    page_size,
+                    offset,
+                )
+
+                events.extend(batch)
+                offset += len(batch)
+
+                if offset >= total or not batch:
+                    break
+
+            output = io.StringIO()
+
+            fields = [
+                "id",
+                "tenant_id",
+                "event_type",
+                "previous_plan",
+                "new_plan",
+                "previous_limit",
+                "new_limit",
+                "actor_type",
+                "actor_id",
+                "created_at",
+            ]
+
+            writer = csv.DictWriter(
+                output,
+                fieldnames=fields,
+                lineterminator="\n",
+            )
+
+            writer.writeheader()
+            writer.writerows(events)
+
+            filename = (
+                "subscription-events-"
+                f"{tenant_id}.csv"
+            )
+
+            self.send_csv(
+                filename,
+                output.getvalue(),
+            )
             return
 
         if path == "/api/subscription/events":
