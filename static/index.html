@@ -100,6 +100,22 @@
 
     <section class="usage-card">
         <h2>Historico de assinatura</h2>
+        <label for="auditActorFilter">
+            Responsavel
+        </label>
+        <select id="auditActorFilter">
+            <option value="">Todos</option>
+            <option value="customer">Cliente</option>
+            <option value="admin">Administracao</option>
+            <option value="system">Sistema</option>
+        </select>
+        <button
+            id="applyAuditFilter"
+            type="button"
+        >
+            Aplicar filtro
+        </button>
+
         <p id="subscriptionAuditStatus">
             Carregando historico...
         </p>
@@ -201,6 +217,27 @@
     let auditOffset = 0;
     const auditLimit = 10;
 
+    function auditActorFilter() {
+    return document
+        .querySelector("#auditActorFilter")
+        .value;
+    }
+
+    function buildAuditQuery() {
+    const parameters = new URLSearchParams({
+        limit: auditLimit,
+        offset: auditOffset
+    });
+
+    const actorType = auditActorFilter();
+
+    if (actorType) {
+        parameters.set("actor_type", actorType);
+    }
+
+    return parameters.toString();
+    }
+
     async function loadSubscriptionAudit(reset = true) {
     const status = document.querySelector(
         "#subscriptionAuditStatus"
@@ -224,8 +261,8 @@
 
     try {
         const response = await fetch(
-            "/api/subscription/events" +
-            `?limit=${auditLimit}&offset=${auditOffset}`
+            "/api/subscription/events?" +
+            buildAuditQuery()
         );
 
         const data = await response.json();
@@ -289,9 +326,25 @@
         loadSubscriptionAudit(false);
     });
 
+    document
+    .querySelector("#applyAuditFilter")
+    .addEventListener("click", () => {
+        loadSubscriptionAudit(true);
+    });
+
     function exportSubscriptionAudit() {
+        const parameters = new URLSearchParams();
+        const actorType = auditActorFilter();
+
+        if (actorType) {
+            parameters.set("actor_type", actorType);
+        }
+
+        const query = parameters.toString();
+
         window.location.href =
-            "/api/subscription/events/export";
+            "/api/subscription/events/export" +
+            (query ? `?${query}` : "");
     }
 
     document

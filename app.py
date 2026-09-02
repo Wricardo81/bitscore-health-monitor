@@ -285,10 +285,34 @@ def list_tenants():
     return tenants
 
 
+def parse_actor_filter(query):
+    actor_type = str(
+        query.get("actor_type", [""])[0]
+    ).strip().lower()
+
+    valid_actor_types = {
+        "customer",
+        "admin",
+        "system",
+    }
+
+    if (
+        actor_type
+        and actor_type not in valid_actor_types
+    ):
+        return None, (
+            "Filtro actor_type invalido: use "
+            "customer, admin ou system"
+        )
+
+    return actor_type, None
+
+
 def list_subscription_events(
     tenant_id,
     limit=10,
     offset=0,
+    actor_type="",
 ):
     with connect_database() as connection:
         rows = connection.execute("""
@@ -305,10 +329,13 @@ def list_subscription_events(
                 created_at
             FROM subscription_events
             WHERE tenant_id = ?
+              AND (? = '' OR actor_type = ?)
             ORDER BY created_at DESC, id DESC
             LIMIT ? OFFSET ?
         """, (
             tenant_id,
+            actor_type,
+            actor_type,
             limit,
             offset,
         )).fetchall()
@@ -317,7 +344,12 @@ def list_subscription_events(
             SELECT COUNT(*) AS total
             FROM subscription_events
             WHERE tenant_id = ?
-        """, (tenant_id,)).fetchone()["total"]
+              AND (? = '' OR actor_type = ?)
+        """, (
+            tenant_id,
+            actor_type,
+            actor_type,
+        )).fetchone()["total"]
 
     events = [
         {
@@ -518,6 +550,20 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 })
                 return
 
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            actor_type, filter_error = (
+                parse_actor_filter(query)
+            )
+
+            if filter_error:
+                self.send_json(400, {
+                    "error": filter_error,
+                })
+                return
+
             events = []
             offset = 0
             page_size = 50
@@ -527,6 +573,7 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                     tenant_id,
                     page_size,
                     offset,
+                    actor_type,
                 )
 
                 events.extend(batch)
@@ -583,6 +630,16 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 urlparse(self.path).query
             )
 
+            actor_type, filter_error = (
+                parse_actor_filter(query)
+            )
+
+            if filter_error:
+                self.send_json(400, {
+                    "error": filter_error,
+                })
+                return
+
             try:
                 limit = int(
                     query.get("limit", ["10"])[0]
@@ -614,6 +671,7 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 tenant_id,
                 limit,
                 offset,
+                actor_type,
             )
 
             has_more = (
@@ -630,6 +688,9 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 "tenant_id": tenant_id,
                 "events": events,
                 "total": total,
+                "filters": {
+                    "actor_type": actor_type or None,
+                },
                 "pagination": {
                     "limit": limit,
                     "offset": offset,
