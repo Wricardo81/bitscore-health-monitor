@@ -799,5 +799,87 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def test_subscription_events_filters_actor_type(self):
+        self.create_two_subscription_events(
+            "tenant-actor-filter"
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-actor-filter"
+                "&actor_type=customer"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total"], 2)
+        self.assertEqual(
+            body["filters"]["actor_type"],
+            "customer",
+        )
+        self.assertTrue(
+            all(
+                event["actor_type"] == "customer"
+                for event in body["events"]
+            )
+        )
+
+    def test_subscription_events_rejects_invalid_actor_filter(self):
+        self.create_tenant("tenant-filter-invalid")
+
+        status, body, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-filter-invalid"
+                "&actor_type=unknown"
+            )
+        )
+
+        self.assertEqual(status, 400)
+        self.assertIn("actor_type", body["error"])
+
+    def test_csv_export_respects_actor_filter(self):
+        self.create_tenant("tenant-export-filter")
+
+        self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-export-filter"
+            ),
+            method="POST",
+            payload={
+                "plan": "Growth",
+                "actor_type": "admin",
+                "actor_id": "csv-admin",
+            },
+        )
+
+        self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-export-filter"
+            ),
+            method="POST",
+            payload={
+                "plan": "Scale",
+                "actor_type": "customer",
+                "actor_id": "csv-customer",
+            },
+        )
+
+        status, content, _ = self.request_text(
+            (
+                "/api/subscription/events/export"
+                "?tenant_id=tenant-export-filter"
+                "&actor_type=admin"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn("csv-admin", content)
+        self.assertNotIn("csv-customer", content)
+
+
 if __name__ == "__main__":
     unittest.main()
