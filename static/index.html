@@ -17,7 +17,8 @@
     }
 
     .card {
-      width: min(420px, 85%);
+      width: min(520px, calc(100% - 32px));
+      box-sizing: border-box;
       padding: 32px;
       border: 1px solid #64ffda;
       border-radius: 24px;
@@ -69,6 +70,125 @@
     .blocked {
     color: #ff6b6b;
     }
+
+    .audit-filters {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      margin: 18px 0;
+      padding: 16px;
+      border: 1px solid #233554;
+      border-radius: 14px;
+      background: #0d1f38;
+    }
+
+    .filter-field {
+      display: grid;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .filter-field label {
+      color: #ccd6f6;
+      font-size: 0.82rem;
+      font-weight: bold;
+      letter-spacing: 0.02em;
+    }
+
+    .filter-control {
+      width: 100%;
+      min-width: 0;
+      min-height: 46px;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      border: 1px solid #3d5275;
+      border-radius: 10px;
+      outline: none;
+      background: #112240;
+      color: #ffffff;
+      font: inherit;
+      color-scheme: dark;
+      transition:
+        border-color 0.2s ease,
+        box-shadow 0.2s ease,
+        background 0.2s ease;
+    }
+
+    .filter-control:hover {
+      border-color: #64ffda;
+    }
+
+    .filter-control:focus {
+      border-color: #64ffda;
+      background: #14284a;
+      box-shadow: 0 0 0 3px rgba(100, 255, 218, 0.16);
+    }
+
+    .audit-filter-actions,
+    .audit-history-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .audit-filter-actions {
+      margin-top: 2px;
+    }
+
+    .audit-history-actions {
+      margin-top: 16px;
+    }
+
+    .button-secondary {
+      border: 1px solid #64ffda;
+      background: transparent;
+      color: #64ffda;
+    }
+
+    .button-secondary:hover {
+      background: rgba(100, 255, 218, 0.1);
+    }
+
+    #subscriptionAuditStatus {
+      min-height: 20px;
+      color: #ccd6f6;
+      line-height: 1.5;
+    }
+
+    #subscriptionAuditList p {
+      padding: 12px;
+      border-left: 3px solid #64ffda;
+      border-radius: 8px;
+      background: #112240;
+      line-height: 1.5;
+    }
+
+    @media (min-width: 560px) {
+      .audit-filters {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .filter-field--wide,
+      .audit-filter-actions {
+        grid-column: 1 / -1;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .card {
+        padding: 20px;
+        border-radius: 18px;
+      }
+
+      .usage-card {
+        padding: 16px;
+      }
+
+      .audit-filter-actions button,
+      .audit-history-actions button {
+        width: 100%;
+      }
+    }
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -100,56 +220,88 @@
 
     <section class="usage-card">
         <h2>Historico de assinatura</h2>
-        <label for="auditActorFilter">
-            Responsavel
-        </label>
-        <select id="auditActorFilter">
-            <option value="">Todos</option>
-            <option value="customer">Cliente</option>
-            <option value="admin">Administracao</option>
-            <option value="system">Sistema</option>
-        </select>
 
-        <label for="auditDateFrom">
-            Data inicial
-        </label>
-        <input
-            id="auditDateFrom"
-            type="date"
-        >
+        <div class="audit-filters">
+            <div class="filter-field filter-field--wide">
+                <label for="auditActorFilter">
+                    Responsavel pela alteracao
+                </label>
+                <select
+                    id="auditActorFilter"
+                    class="filter-control"
+                >
+                    <option value="">Todos os responsaveis</option>
+                    <option value="customer">Cliente</option>
+                    <option value="admin">Administracao</option>
+                    <option value="system">Sistema</option>
+                </select>
+            </div>
 
-        <label for="auditDateTo">
-            Data final
-        </label>
-        <input
-            id="auditDateTo"
-            type="date"
-        >
-        <button
-            id="applyAuditFilter"
-            type="button"
-        >
-            Aplicar filtro
-        </button>
+            <div class="filter-field">
+                <label for="auditDateFrom">
+                    Data inicial
+                </label>
+                <input
+                    id="auditDateFrom"
+                    class="filter-control"
+                    type="date"
+                >
+            </div>
 
-        <p id="subscriptionAuditStatus">
+            <div class="filter-field">
+                <label for="auditDateTo">
+                    Data final
+                </label>
+                <input
+                    id="auditDateTo"
+                    class="filter-control"
+                    type="date"
+                >
+            </div>
+
+            <div class="audit-filter-actions">
+                <button
+                    id="applyAuditFilter"
+                    type="button"
+                >
+                    Aplicar filtros
+                </button>
+
+                <button
+                    id="clearAuditFilter"
+                    class="button-secondary"
+                    type="button"
+                >
+                    Limpar filtros
+                </button>
+            </div>
+        </div>
+
+        <p
+            id="subscriptionAuditStatus"
+            aria-live="polite"
+        >
             Carregando historico...
         </p>
-        <div id="subscriptionAuditList"></div>
-        <button
-            id="loadMoreAudit"
-            type="button"
-            hidden
-        >
-            Carregar mais
-        </button>
 
-        <button
-            id="exportAudit"
-            type="button"
-        >
-            Exportar CSV
-        </button>
+        <div id="subscriptionAuditList"></div>
+
+        <div class="audit-history-actions">
+            <button
+                id="loadMoreAudit"
+                type="button"
+                hidden
+            >
+                Carregar mais
+            </button>
+
+            <button
+                id="exportAudit"
+                type="button"
+            >
+                Exportar CSV
+            </button>
+        </div>
     </section>
 
     <button id="refresh">Verificar novamente</button>
@@ -361,6 +513,24 @@
     document
     .querySelector("#applyAuditFilter")
     .addEventListener("click", () => {
+        loadSubscriptionAudit(true);
+    });
+
+    document
+    .querySelector("#clearAuditFilter")
+    .addEventListener("click", () => {
+        document.querySelector(
+            "#auditActorFilter"
+        ).value = "";
+
+        document.querySelector(
+            "#auditDateFrom"
+        ).value = "";
+
+        document.querySelector(
+            "#auditDateTo"
+        ).value = "";
+
         loadSubscriptionAudit(true);
     });
 
