@@ -109,6 +109,22 @@
             <option value="admin">Administracao</option>
             <option value="system">Sistema</option>
         </select>
+
+        <label for="auditDateFrom">
+            Data inicial
+        </label>
+        <input
+            id="auditDateFrom"
+            type="date"
+        >
+
+        <label for="auditDateTo">
+            Data final
+        </label>
+        <input
+            id="auditDateTo"
+            type="date"
+        >
         <button
             id="applyAuditFilter"
             type="button"
@@ -235,6 +251,22 @@
         parameters.set("actor_type", actorType);
     }
 
+    const dateFrom = document
+        .querySelector("#auditDateFrom")
+        .value;
+
+    const dateTo = document
+        .querySelector("#auditDateTo")
+        .value;
+
+    if (dateFrom) {
+        parameters.set("date_from", dateFrom);
+    }
+
+    if (dateTo) {
+        parameters.set("date_to", dateTo);
+    }
+
     return parameters.toString();
     }
 
@@ -338,6 +370,22 @@
 
         if (actorType) {
             parameters.set("actor_type", actorType);
+        }
+
+        const dateFrom = document
+            .querySelector("#auditDateFrom")
+            .value;
+
+        const dateTo = document
+            .querySelector("#auditDateTo")
+            .value;
+
+        if (dateFrom) {
+            parameters.set("date_from", dateFrom);
+        }
+
+        if (dateTo) {
+            parameters.set("date_to", dateTo);
         }
 
         const query = parameters.toString();

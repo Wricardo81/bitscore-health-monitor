@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -879,6 +880,106 @@ class TenantApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("csv-admin", content)
         self.assertNotIn("csv-customer", content)
+
+
+    def test_subscription_events_filters_inclusive_date_range(self):
+        self.create_two_subscription_events(
+            "tenant-date-range"
+        )
+
+        today = (
+            datetime.now(timezone.utc)
+            .date()
+            .isoformat()
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-date-range"
+                f"&date_from={today}"
+                f"&date_to={today}"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total"], 2)
+        self.assertEqual(
+            body["filters"]["date_from"],
+            today,
+        )
+        self.assertEqual(
+            body["filters"]["date_to"],
+            today,
+        )
+
+    def test_subscription_events_excludes_outside_period(self):
+        self.create_two_subscription_events(
+            "tenant-date-future"
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/subscription/events"
+                "?tenant_id=tenant-date-future"
+                "&date_from=2099-01-01"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total"], 0)
+        self.assertEqual(body["events"], [])
+
+    def test_subscription_events_rejects_invalid_period(self):
+        self.create_tenant("tenant-date-invalid")
+
+        invalid_queries = [
+            "date_from=2026-99-01",
+            "date_to=02-09-2026",
+            (
+                "date_from=2026-09-10"
+                "&date_to=2026-09-01"
+            ),
+        ]
+
+        for query in invalid_queries:
+            with self.subTest(query=query):
+                status, body, _ = self.request(
+                    (
+                        "/api/subscription/events"
+                        "?tenant_id=tenant-date-invalid"
+                        f"&{query}"
+                    )
+                )
+
+                self.assertEqual(status, 400)
+                self.assertIn(
+                    "Periodo invalido",
+                    body["error"],
+                )
+
+    def test_csv_export_respects_date_range(self):
+        self.create_two_subscription_events(
+            "tenant-csv-date"
+        )
+
+        status, content, _ = self.request_text(
+            (
+                "/api/subscription/events/export"
+                "?tenant_id=tenant-csv-date"
+                "&date_from=2099-01-01"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn(
+            "tenant_id,event_type",
+            content,
+        )
+        self.assertNotIn(
+            "tenant-csv-date",
+            content,
+        )
 
 
 if __name__ == "__main__":
