@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 import csv
@@ -308,13 +308,85 @@ def parse_actor_filter(query):
     return actor_type, None
 
 
+def parse_date_filters(query):
+    date_from = str(
+        query.get("date_from", [""])[0]
+    ).strip()
+
+    date_to = str(
+        query.get("date_to", [""])[0]
+    ).strip()
+
+    parsed_from = None
+    parsed_to = None
+
+    try:
+        if date_from:
+            parsed_from = datetime.strptime(
+                date_from,
+                "%Y-%m-%d",
+            ).date()
+
+        if date_to:
+            parsed_to = datetime.strptime(
+                date_to,
+                "%Y-%m-%d",
+            ).date()
+    except ValueError:
+        return None, (
+            "Periodo invalido: use datas no "
+            "formato YYYY-MM-DD"
+        )
+
+    if (
+        parsed_from is not None
+        and parsed_to is not None
+        and parsed_from > parsed_to
+    ):
+        return None, (
+            "Periodo invalido: date_from nao "
+            "pode ser posterior a date_to"
+        )
+
+    start_timestamp = (
+        f"{date_from}T00:00:00"
+        if parsed_from is not None
+        else ""
+    )
+
+    end_timestamp = (
+        f"{parsed_to + timedelta(days=1)}T00:00:00"
+        if parsed_to is not None
+        else ""
+    )
+
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "start_timestamp": start_timestamp,
+        "end_timestamp": end_timestamp,
+    }, None
+
+
 def list_subscription_events(
     tenant_id,
     limit=10,
     offset=0,
     actor_type="",
+    date_from="",
+    date_to_exclusive="",
 ):
     with connect_database() as connection:
+        parameters = (
+            tenant_id,
+            actor_type,
+            actor_type,
+            date_from,
+            date_from,
+            date_to_exclusive,
+            date_to_exclusive,
+        )
+
         rows = connection.execute("""
             SELECT
                 id,
@@ -330,12 +402,12 @@ def list_subscription_events(
             FROM subscription_events
             WHERE tenant_id = ?
               AND (? = '' OR actor_type = ?)
+              AND (? = '' OR created_at >= ?)
+              AND (? = '' OR created_at < ?)
             ORDER BY created_at DESC, id DESC
             LIMIT ? OFFSET ?
         """, (
-            tenant_id,
-            actor_type,
-            actor_type,
+            *parameters,
             limit,
             offset,
         )).fetchall()
@@ -345,11 +417,9 @@ def list_subscription_events(
             FROM subscription_events
             WHERE tenant_id = ?
               AND (? = '' OR actor_type = ?)
-        """, (
-            tenant_id,
-            actor_type,
-            actor_type,
-        )).fetchone()["total"]
+              AND (? = '' OR created_at >= ?)
+              AND (? = '' OR created_at < ?)
+        """, parameters).fetchone()["total"]
 
     events = [
         {
@@ -564,6 +634,16 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 })
                 return
 
+            date_filters, date_filter_error = (
+                parse_date_filters(query)
+            )
+
+            if date_filter_error:
+                self.send_json(400, {
+                    "error": date_filter_error,
+                })
+                return
+
             events = []
             offset = 0
             page_size = 50
@@ -574,6 +654,8 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                     page_size,
                     offset,
                     actor_type,
+                    date_filters["start_timestamp"],
+                    date_filters["end_timestamp"],
                 )
 
                 events.extend(batch)
@@ -640,6 +722,16 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 })
                 return
 
+            date_filters, date_filter_error = (
+                parse_date_filters(query)
+            )
+
+            if date_filter_error:
+                self.send_json(400, {
+                    "error": date_filter_error,
+                })
+                return
+
             try:
                 limit = int(
                     query.get("limit", ["10"])[0]
@@ -672,6 +764,8 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 limit,
                 offset,
                 actor_type,
+                date_filters["start_timestamp"],
+                date_filters["end_timestamp"],
             )
 
             has_more = (
@@ -690,6 +784,12 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 "total": total,
                 "filters": {
                     "actor_type": actor_type or None,
+                    "date_from": (
+                        date_filters["date_from"] or None
+                    ),
+                    "date_to": (
+                        date_filters["date_to"] or None
+                    ),
                 },
                 "pagination": {
                     "limit": limit,
