@@ -982,5 +982,39 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def test_dashboard_has_responsive_audit_filters(self):
+        status, content, headers = self.request_text("/")
+
+        self.assertEqual(status, 200)
+        self.assertIn(
+            "text/html",
+            headers["Content-Type"],
+        )
+
+        required_elements = [
+            'class="audit-filters"',
+            'id="auditActorFilter"',
+            'id="auditDateFrom"',
+            'id="auditDateTo"',
+            'id="applyAuditFilter"',
+            'id="clearAuditFilter"',
+            'class="audit-history-actions"',
+            'aria-live="polite"',
+        ]
+
+        for element in required_elements:
+            with self.subTest(element=element):
+                self.assertIn(element, content)
+
+        self.assertIn(
+            'querySelector("#clearAuditFilter")',
+            content,
+        )
+        self.assertIn(
+            "color-scheme: dark",
+            content,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
