@@ -440,6 +440,86 @@ def list_subscription_events(
     return events, total
 
 
+def get_subscription_summary(
+    tenant_id,
+    actor_type="",
+    date_from="",
+    date_to_exclusive="",
+):
+    parameters = (
+        tenant_id,
+        actor_type,
+        actor_type,
+        date_from,
+        date_from,
+        date_to_exclusive,
+        date_to_exclusive,
+    )
+
+    filters_sql = """
+        WHERE tenant_id = ?
+          AND event_type = 'plan_upgraded'
+          AND (? = '' OR actor_type = ?)
+          AND (? = '' OR created_at >= ?)
+          AND (? = '' OR created_at < ?)
+    """
+
+    with connect_database() as connection:
+        actor_rows = connection.execute(
+            f"""
+            SELECT actor_type, COUNT(*) AS total
+            FROM subscription_events
+            {filters_sql}
+            GROUP BY actor_type
+            """,
+            parameters,
+        ).fetchall()
+
+        transition_rows = connection.execute(
+            f"""
+            SELECT
+                previous_plan,
+                new_plan,
+                COUNT(*) AS total
+            FROM subscription_events
+            {filters_sql}
+            GROUP BY previous_plan, new_plan
+            ORDER BY
+                total DESC,
+                previous_plan,
+                new_plan
+            """,
+            parameters,
+        ).fetchall()
+
+    actors = {
+        "customer": 0,
+        "admin": 0,
+        "system": 0,
+    }
+
+    for row in actor_rows:
+        actors[row["actor_type"]] = row["total"]
+
+    transitions = [
+        {
+            "previous_plan": row["previous_plan"],
+            "new_plan": row["new_plan"],
+            "total": row["total"],
+        }
+        for row in transition_rows
+    ]
+
+    return {
+        "total_upgrades": sum(actors.values()),
+        "actors": actors,
+        "transitions": transitions,
+        "most_common_transition": (
+            transitions[0] if transitions else None
+        ),
+    }
+
+
 def upgrade_tenant(
     tenant_id,
     new_plan,
@@ -608,6 +688,61 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             self.send_json(200, {
                 "tenants": tenants,
                 "total": len(tenants),
+            })
+            return
+
+        if path == "/api/subscription/summary":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            actor_type, filter_error = (
+                parse_actor_filter(query)
+            )
+
+            if filter_error:
+                self.send_json(400, {
+                    "error": filter_error,
+                })
+                return
+
+            date_filters, date_filter_error = (
+                parse_date_filters(query)
+            )
+
+            if date_filter_error:
+                self.send_json(400, {
+                    "error": date_filter_error,
+                })
+                return
+
+            summary = get_subscription_summary(
+                tenant_id,
+                actor_type,
+                date_filters["start_timestamp"],
+                date_filters["end_timestamp"],
+            )
+
+            self.send_json(200, {
+                "tenant_id": tenant_id,
+                "filters": {
+                    "actor_type": actor_type or None,
+                    "date_from": (
+                        date_filters["date_from"] or None
+                    ),
+                    "date_to": (
+                        date_filters["date_to"] or None
+                    ),
+                },
+                "summary": summary,
             })
             return
 

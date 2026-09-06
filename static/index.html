@@ -189,6 +189,46 @@
         width: 100%;
       }
     }
+
+    .audit-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin: 18px 0 12px;
+    }
+
+    .audit-summary-card {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+      padding: 14px;
+      border: 1px solid #233554;
+      border-radius: 12px;
+      background: #0d1f38;
+    }
+
+    .audit-summary-card span {
+      color: #a8b2d1;
+      font-size: 0.78rem;
+    }
+
+    .audit-summary-card strong {
+      color: #64ffda;
+      font-size: 1.45rem;
+    }
+
+    #subscriptionSummaryStatus {
+      min-height: 20px;
+      color: #ccd6f6;
+      font-size: 0.86rem;
+    }
+
+    @media (min-width: 680px) {
+      .audit-summary-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -276,6 +316,39 @@
                 </button>
             </div>
         </div>
+
+        <div
+            id="subscriptionSummary"
+            class="audit-summary-grid"
+            aria-label="Resumo da auditoria"
+        >
+            <article class="audit-summary-card">
+                <span>Total de upgrades</span>
+                <strong id="summaryTotal">0</strong>
+            </article>
+
+            <article class="audit-summary-card">
+                <span>Cliente</span>
+                <strong id="summaryCustomer">0</strong>
+            </article>
+
+            <article class="audit-summary-card">
+                <span>Administracao</span>
+                <strong id="summaryAdmin">0</strong>
+            </article>
+
+            <article class="audit-summary-card">
+                <span>Sistema</span>
+                <strong id="summarySystem">0</strong>
+            </article>
+        </div>
+
+        <p
+            id="subscriptionSummaryStatus"
+            aria-live="polite"
+        >
+            Carregando resumo...
+        </p>
 
         <p
             id="subscriptionAuditStatus"
@@ -422,6 +495,57 @@
     return parameters.toString();
     }
 
+    async function loadSubscriptionSummary() {
+    const summaryStatus = document.querySelector(
+        "#subscriptionSummaryStatus"
+    );
+
+    try {
+        const response = await fetch(
+            "/api/subscription/summary?" +
+            buildAuditQuery()
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        const summary = data.summary;
+
+        document.querySelector("#summaryTotal")
+            .textContent = summary.total_upgrades;
+
+        document.querySelector("#summaryCustomer")
+            .textContent = summary.actors.customer;
+
+        document.querySelector("#summaryAdmin")
+            .textContent = summary.actors.admin;
+
+        document.querySelector("#summarySystem")
+            .textContent = summary.actors.system;
+
+        const transition = (
+            summary.most_common_transition
+        );
+
+        summaryStatus.textContent = transition
+            ? (
+                "Transicao mais frequente: " +
+                `${transition.previous_plan} para ` +
+                `${transition.new_plan} ` +
+                `(${transition.total})`
+            )
+            : "Nenhuma transicao encontrada nos filtros.";
+    } catch (error) {
+        summaryStatus.textContent =
+            `Falha ao carregar resumo: ${error.message}`;
+    }
+    }
+
     async function loadSubscriptionAudit(reset = true) {
     const status = document.querySelector(
         "#subscriptionAuditStatus"
@@ -512,13 +636,16 @@
 
     document
     .querySelector("#applyAuditFilter")
-    .addEventListener("click", () => {
-        loadSubscriptionAudit(true);
+    .addEventListener("click", async () => {
+        await Promise.all([
+            loadSubscriptionAudit(true),
+            loadSubscriptionSummary(),
+        ]);
     });
 
     document
     .querySelector("#clearAuditFilter")
-    .addEventListener("click", () => {
+    .addEventListener("click", async () => {
         document.querySelector(
             "#auditActorFilter"
         ).value = "";
@@ -531,7 +658,10 @@
             "#auditDateTo"
         ).value = "";
 
-        loadSubscriptionAudit(true);
+        await Promise.all([
+            loadSubscriptionAudit(true),
+            loadSubscriptionSummary(),
+        ]);
     });
 
     function exportSubscriptionAudit() {
@@ -631,7 +761,10 @@
         }
 
         renderUsage(data.tenant);
-        await loadSubscriptionAudit();
+        await Promise.all([
+            loadSubscriptionAudit(),
+            loadSubscriptionSummary(),
+        ]);
     } catch (error) {
         document.querySelector("#usageAlert").textContent =
             `Falha no upgrade: ${error.message}`;
@@ -651,6 +784,7 @@
 
     loadUsage();
     loadSubscriptionAudit();
+    loadSubscriptionSummary();
   </script>
 </body>
 </html>

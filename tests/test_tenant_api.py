@@ -1016,5 +1016,137 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def test_subscription_summary_counts_actors_and_transitions(self):
+        self.create_tenant(
+            "tenant-summary",
+            plan="Start",
+            limit=100,
+        )
+
+        self.request(
+            "/api/usage/upgrade?tenant_id=tenant-summary",
+            method="POST",
+            payload={
+                "plan": "Growth",
+                "actor_type": "admin",
+                "actor_id": "summary-admin",
+            },
+        )
+
+        self.request(
+            "/api/usage/upgrade?tenant_id=tenant-summary",
+            method="POST",
+            payload={
+                "plan": "Scale",
+                "actor_type": "customer",
+                "actor_id": "summary-customer",
+            },
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/subscription/summary"
+                "?tenant_id=tenant-summary"
+            )
+        )
+
+        summary = body["summary"]
+
+        self.assertEqual(status, 200)
+        self.assertEqual(summary["total_upgrades"], 2)
+        self.assertEqual(summary["actors"]["admin"], 1)
+        self.assertEqual(summary["actors"]["customer"], 1)
+        self.assertEqual(summary["actors"]["system"], 0)
+
+        transitions = {
+            (
+                item["previous_plan"],
+                item["new_plan"],
+            ): item["total"]
+            for item in summary["transitions"]
+        }
+
+        self.assertEqual(
+            transitions[("Start", "Growth")],
+            1,
+        )
+        self.assertEqual(
+            transitions[("Growth", "Scale")],
+            1,
+        )
+
+    def test_subscription_summary_respects_actor_filter(self):
+        self.create_two_subscription_events(
+            "tenant-summary-filter"
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/subscription/summary"
+                "?tenant_id=tenant-summary-filter"
+                "&actor_type=customer"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body["filters"]["actor_type"],
+            "customer",
+        )
+        self.assertEqual(
+            body["summary"]["total_upgrades"],
+            2,
+        )
+        self.assertEqual(
+            body["summary"]["actors"]["admin"],
+            0,
+        )
+
+    def test_subscription_summary_respects_date_range(self):
+        self.create_two_subscription_events(
+            "tenant-summary-date"
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/subscription/summary"
+                "?tenant_id=tenant-summary-date"
+                "&date_from=2099-01-01"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body["summary"]["total_upgrades"],
+            0,
+        )
+        self.assertEqual(
+            body["summary"]["transitions"],
+            [],
+        )
+        self.assertIsNone(
+            body["summary"]["most_common_transition"]
+        )
+
+    def test_subscription_summary_remains_tenant_isolated(self):
+        self.create_two_subscription_events(
+            "tenant-summary-alpha"
+        )
+        self.create_tenant("tenant-summary-beta")
+
+        status, body, _ = self.request(
+            (
+                "/api/subscription/summary"
+                "?tenant_id=tenant-summary-beta"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body["summary"]["total_upgrades"],
+            0,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
