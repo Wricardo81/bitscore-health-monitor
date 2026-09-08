@@ -229,6 +229,62 @@
       }
     }
 
+
+    .usage-trend-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .usage-trend-total {
+      color: #64ffda;
+      font-size: 1.5rem;
+    }
+
+    .trend-bars {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(24px, 1fr));
+      align-items: end;
+      gap: 8px;
+      height: 170px;
+      margin-top: 20px;
+      padding-top: 14px;
+      border-bottom: 1px solid #3d5275;
+    }
+
+    .trend-column {
+      display: grid;
+      grid-template-rows: 1fr auto;
+      align-items: end;
+      gap: 8px;
+      height: 100%;
+      min-width: 0;
+    }
+
+    .trend-bar {
+      width: 100%;
+      min-height: 8px;
+      border-radius: 8px 8px 3px 3px;
+      background: linear-gradient(
+        180deg,
+        #64ffda,
+        #24bfa2
+      );
+      box-shadow: 0 0 14px rgba(100, 255, 218, 0.18);
+    }
+
+    .trend-label {
+      color: #a8b2d1;
+      font-size: 0.68rem;
+      text-align: center;
+    }
+
+    #usageTrendStatus {
+      color: #a8b2d1;
+      font-size: 0.86rem;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -256,6 +312,31 @@
 
         <button id="consume">Simular novo pedido</button>
         <button id="upgrade" hidden>Fazer upgrade</button>
+    </section>
+
+    <section class="usage-card" id="usageTrendCard">
+        <div class="usage-trend-header">
+            <div>
+                <h2>Tendencia de consumo</h2>
+                <p id="usageTrendStatus" aria-live="polite">
+                    Carregando os ultimos sete dias...
+                </p>
+            </div>
+
+            <strong
+                id="usageTrendTotal"
+                class="usage-trend-total"
+            >
+                0
+            </strong>
+        </div>
+
+        <div
+            id="usageTrendBars"
+            class="trend-bars"
+            role="img"
+            aria-label="Consumo diario dos ultimos sete dias"
+        ></div>
     </section>
 
     <section class="usage-card">
@@ -708,6 +789,75 @@
     renderUsage(data);
     }
 
+    async function loadUsageTrend() {
+    const status = document.querySelector(
+        "#usageTrendStatus"
+    );
+
+    const bars = document.querySelector(
+        "#usageTrendBars"
+    );
+
+    try {
+        const response = await fetch(
+            "/api/usage/trend?days=7"
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        document.querySelector(
+            "#usageTrendTotal"
+        ).textContent = data.total_consumed;
+
+        bars.replaceChildren();
+
+        const maximum = Math.max(
+            ...data.trend.map(point => point.amount),
+            1
+        );
+
+        for (const point of data.trend) {
+            const column = document.createElement("div");
+            column.className = "trend-column";
+
+            const bar = document.createElement("div");
+            bar.className = "trend-bar";
+            bar.style.height = (
+                `${Math.max(
+                    8,
+                    (point.amount / maximum) * 100
+                )}%`
+            );
+            bar.title = (
+                `${point.date}: ${point.amount} consumo(s)`
+            );
+
+            const label = document.createElement("span");
+            label.className = "trend-label";
+
+            const [, month, day] = point.date.split("-");
+            label.textContent = `${day}/${month}`;
+
+            column.append(bar, label);
+            bars.appendChild(column);
+        }
+
+        status.textContent =
+            `Media diaria: ${data.daily_average}` +
+            ` | Periodo: ${data.date_from}` +
+            ` a ${data.date_to}`;
+    } catch (error) {
+        status.textContent =
+            `Falha ao carregar tendencia: ${error.message}`;
+    }
+    }
+
     async function consumeUsage() {
     const idempotencyKey = crypto.randomUUID();
 
@@ -722,6 +872,7 @@
 
     if (data.usage) {
         renderUsage(data.usage);
+        await loadUsageTrend();
         return;
     }
 
@@ -783,6 +934,7 @@
     .addEventListener("click", upgradePlan);
 
     loadUsage();
+    loadUsageTrend();
     loadSubscriptionAudit();
     loadSubscriptionSummary();
   </script>

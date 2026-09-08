@@ -56,6 +56,26 @@ def initialize_database():
         """)
 
         connection.execute("""
+            CREATE TABLE IF NOT EXISTS usage_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (tenant_id)
+                    REFERENCES usage_counters (tenant_id)
+            )
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS
+                idx_usage_events_tenant_created
+            ON usage_events (
+                tenant_id,
+                created_at
+            )
+        """)
+
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS subscription_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tenant_id TEXT NOT NULL,
@@ -226,6 +246,19 @@ def consume_usage(tenant_id, idempotency_key):
         }
 
         connection.execute("""
+            INSERT INTO usage_events (
+                tenant_id,
+                amount,
+                created_at
+            )
+            VALUES (?, ?, ?)
+        """, (
+            tenant_id,
+            1,
+            timestamp,
+        ))
+
+        connection.execute("""
             INSERT INTO idempotency_records (
                 tenant_id,
                 idempotency_key,
@@ -243,6 +276,68 @@ def consume_usage(tenant_id, idempotency_key):
     return {
         "status": "consumed",
         "usage": usage,
+    }
+
+
+def get_usage_trend(tenant_id, days=7):
+    today = datetime.now(timezone.utc).date()
+    first_day = today - timedelta(days=days - 1)
+    day_after_period = today + timedelta(days=1)
+
+    start_timestamp = f"{first_day}T00:00:00"
+    end_timestamp = f"{day_after_period}T00:00:00"
+
+    with connect_database() as connection:
+        rows = connection.execute("""
+            SELECT
+                substr(created_at, 1, 10) AS event_date,
+                SUM(amount) AS total
+            FROM usage_events
+            WHERE tenant_id = ?
+              AND created_at >= ?
+              AND created_at < ?
+            GROUP BY event_date
+            ORDER BY event_date
+        """, (
+            tenant_id,
+            start_timestamp,
+            end_timestamp,
+        )).fetchall()
+
+    totals_by_date = {
+        row["event_date"]: row["total"]
+        for row in rows
+    }
+
+    trend = []
+
+    for day_offset in range(days):
+        current_date = (
+            first_day + timedelta(days=day_offset)
+        )
+
+        date_text = current_date.isoformat()
+
+        trend.append({
+            "date": date_text,
+            "amount": totals_by_date.get(date_text, 0),
+        })
+
+    total_consumed = sum(
+        point["amount"]
+        for point in trend
+    )
+
+    return {
+        "days": days,
+        "date_from": first_day.isoformat(),
+        "date_to": today.isoformat(),
+        "total_consumed": total_consumed,
+        "daily_average": round(
+            total_consumed / days,
+            2,
+        ),
+        "trend": trend,
     }
 
 
@@ -934,6 +1029,48 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                     "has_more": has_more,
                     "next_offset": next_offset,
                 },
+            })
+            return
+
+        if path == "/api/usage/trend":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            try:
+                days = int(
+                    query.get("days", ["7"])[0]
+                )
+            except (TypeError, ValueError):
+                self.send_json(400, {
+                    "error": "Periodo de tendencia invalido",
+                })
+                return
+
+            if days < 1 or days > 30:
+                self.send_json(400, {
+                    "error": (
+                        "days deve estar entre 1 e 30"
+                    ),
+                })
+                return
+
+            trend = get_usage_trend(
+                tenant_id,
+                days,
+            )
+
+            self.send_json(200, {
+                "tenant_id": tenant_id,
+                **trend,
             })
             return
 

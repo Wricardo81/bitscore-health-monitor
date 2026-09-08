@@ -1148,5 +1148,104 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def test_usage_trend_returns_seven_zero_filled_days(self):
+        self.create_tenant("tenant-trend-seven")
+
+        self.consume(
+            (
+                "/api/usage/consume"
+                "?tenant_id=tenant-trend-seven"
+            )
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/trend"
+                "?tenant_id=tenant-trend-seven"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["days"], 7)
+        self.assertEqual(len(body["trend"]), 7)
+        self.assertEqual(body["total_consumed"], 1)
+        self.assertEqual(
+            sum(
+                point["amount"]
+                for point in body["trend"]
+            ),
+            1,
+        )
+
+    def test_usage_trend_ignores_idempotent_replay(self):
+        self.create_tenant("tenant-trend-replay")
+
+        endpoint = (
+            "/api/usage/consume"
+            "?tenant_id=tenant-trend-replay"
+        )
+
+        self.consume(endpoint, "trend-repeated-key")
+        self.consume(endpoint, "trend-repeated-key")
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/trend"
+                "?tenant_id=tenant-trend-replay"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total_consumed"], 1)
+
+    def test_usage_trend_rejects_invalid_days(self):
+        self.create_tenant("tenant-trend-invalid")
+
+        for days in ["0", "31", "invalid"]:
+            with self.subTest(days=days):
+                status, body, _ = self.request(
+                    (
+                        "/api/usage/trend"
+                        "?tenant_id=tenant-trend-invalid"
+                        f"&days={days}"
+                    )
+                )
+
+                self.assertEqual(status, 400)
+                self.assertIn(
+                    "invalido"
+                    if days == "invalid"
+                    else "entre 1 e 30",
+                    body["error"],
+                )
+
+    def test_usage_trend_remains_tenant_isolated(self):
+        self.create_tenant("tenant-trend-alpha")
+        self.create_tenant("tenant-trend-beta")
+
+        self.consume(
+            (
+                "/api/usage/consume"
+                "?tenant_id=tenant-trend-alpha"
+            )
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/trend"
+                "?tenant_id=tenant-trend-beta"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total_consumed"], 0)
+        self.assertTrue(
+            all(
+                point["amount"] == 0
+                for point in body["trend"]
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
