@@ -1247,5 +1247,113 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def test_usage_forecast_handles_insufficient_data(self):
+        self.create_tenant("tenant-forecast-empty")
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/forecast"
+                "?tenant_id=tenant-forecast-empty"
+            )
+        )
+
+        forecast = body["forecast"]
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            forecast["risk_level"],
+            "insufficient_data",
+        )
+        self.assertIsNone(forecast["days_to_limit"])
+        self.assertIsNone(
+            forecast["projected_exhaustion_date"]
+        )
+
+    def test_usage_forecast_calculates_days_to_limit(self):
+        self.create_tenant(
+            "tenant-forecast-calculation",
+            limit=10,
+        )
+
+        endpoint = (
+            "/api/usage/consume"
+            "?tenant_id=tenant-forecast-calculation"
+        )
+
+        self.consume(endpoint)
+        self.consume(endpoint)
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/forecast"
+                "?tenant_id=tenant-forecast-calculation"
+                "&window=1"
+            )
+        )
+
+        forecast = body["forecast"]
+
+        self.assertEqual(status, 200)
+        self.assertEqual(forecast["remaining"], 8)
+        self.assertEqual(forecast["daily_rate"], 2.0)
+        self.assertEqual(forecast["days_to_limit"], 4)
+        self.assertEqual(
+            forecast["risk_level"],
+            "warning",
+        )
+        self.assertIsNotNone(
+            forecast["projected_exhaustion_date"]
+        )
+
+    def test_usage_forecast_rejects_invalid_window(self):
+        self.create_tenant("tenant-forecast-invalid")
+
+        for window in ["0", "31", "invalid"]:
+            with self.subTest(window=window):
+                status, body, _ = self.request(
+                    (
+                        "/api/usage/forecast"
+                        "?tenant_id=tenant-forecast-invalid"
+                        f"&window={window}"
+                    )
+                )
+
+                self.assertEqual(status, 400)
+                self.assertIn(
+                    "invalida"
+                    if window == "invalid"
+                    else "entre 1 e 30",
+                    body["error"],
+                )
+
+    def test_usage_forecast_remains_tenant_isolated(self):
+        self.create_tenant("tenant-forecast-alpha")
+        self.create_tenant("tenant-forecast-beta")
+
+        self.consume(
+            (
+                "/api/usage/consume"
+                "?tenant_id=tenant-forecast-alpha"
+            )
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/forecast"
+                "?tenant_id=tenant-forecast-beta"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body["forecast"]["risk_level"],
+            "insufficient_data",
+        )
+        self.assertEqual(
+            body["forecast"]["daily_rate"],
+            0.0,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
