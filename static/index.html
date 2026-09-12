@@ -285,6 +285,50 @@
       font-size: 0.86rem;
     }
 
+
+    .usage-forecast {
+      margin-top: 18px;
+      padding: 16px;
+      border: 1px solid #233554;
+      border-radius: 14px;
+      background: #0d1f38;
+      transition:
+        border-color 0.2s ease,
+        box-shadow 0.2s ease;
+    }
+
+    .usage-forecast strong {
+      display: block;
+      margin-bottom: 7px;
+      color: #64ffda;
+      font-size: 1.1rem;
+    }
+
+    .usage-forecast p {
+      margin: 0;
+      color: #ccd6f6;
+      line-height: 1.5;
+    }
+
+    .usage-forecast[data-risk="warning"] {
+      border-color: #ffd166;
+    }
+
+    .usage-forecast[data-risk="warning"] strong {
+      color: #ffd166;
+    }
+
+    .usage-forecast[data-risk="critical"],
+    .usage-forecast[data-risk="blocked"] {
+      border-color: #ff6b6b;
+      box-shadow: 0 0 16px rgba(255, 107, 107, 0.12);
+    }
+
+    .usage-forecast[data-risk="critical"] strong,
+    .usage-forecast[data-risk="blocked"] strong {
+      color: #ff6b6b;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -337,6 +381,20 @@
             role="img"
             aria-label="Consumo diario dos ultimos sete dias"
         ></div>
+        <div
+            id="usageForecast"
+            class="usage-forecast"
+            data-risk="loading"
+            aria-live="polite"
+        >
+            <strong id="usageForecastTitle">
+                Calculando previsao...
+            </strong>
+            <p id="usageForecastMessage">
+                Analisando a tendencia dos ultimos sete dias.
+            </p>
+        </div>
+
     </section>
 
     <section class="usage-card">
@@ -858,6 +916,63 @@
     }
     }
 
+    async function loadUsageForecast() {
+    const card = document.querySelector(
+        "#usageForecast"
+    );
+
+    const title = document.querySelector(
+        "#usageForecastTitle"
+    );
+
+    const message = document.querySelector(
+        "#usageForecastMessage"
+    );
+
+    try {
+        const response = await fetch(
+            "/api/usage/forecast?window=7"
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        const forecast = data.forecast;
+        card.dataset.risk = forecast.risk_level;
+
+        if (forecast.risk_level === "insufficient_data") {
+            title.textContent = "Previsao indisponivel";
+            message.textContent = forecast.recommendation;
+            return;
+        }
+
+        if (forecast.risk_level === "blocked") {
+            title.textContent = "Limite atingido";
+            message.textContent = forecast.recommendation;
+            return;
+        }
+
+        title.textContent =
+            `${forecast.days_to_limit} dia(s) estimado(s)`;
+
+        message.textContent =
+            `Restam ${forecast.remaining} operacoes. ` +
+            `Media: ${forecast.daily_rate} por dia. ` +
+            `Data estimada: ` +
+            `${forecast.projected_exhaustion_date}. ` +
+            forecast.recommendation;
+    } catch (error) {
+        card.dataset.risk = "critical";
+        title.textContent = "Falha na previsao";
+        message.textContent = error.message;
+    }
+    }
+
     async function consumeUsage() {
     const idempotencyKey = crypto.randomUUID();
 
@@ -872,7 +987,10 @@
 
     if (data.usage) {
         renderUsage(data.usage);
-        await loadUsageTrend();
+        await Promise.all([
+            loadUsageTrend(),
+            loadUsageForecast(),
+        ]);
         return;
     }
 
@@ -915,6 +1033,7 @@
         await Promise.all([
             loadSubscriptionAudit(),
             loadSubscriptionSummary(),
+            loadUsageForecast(),
         ]);
     } catch (error) {
         document.querySelector("#usageAlert").textContent =
@@ -935,6 +1054,7 @@
 
     loadUsage();
     loadUsageTrend();
+    loadUsageForecast();
     loadSubscriptionAudit();
     loadSubscriptionSummary();
   </script>

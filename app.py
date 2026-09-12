@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from math import ceil
 from urllib.parse import parse_qs, urlparse
 import csv
 import io
@@ -338,6 +339,71 @@ def get_usage_trend(tenant_id, days=7):
             2,
         ),
         "trend": trend,
+    }
+
+
+def get_usage_forecast(tenant_id, window=7):
+    usage = get_usage(tenant_id)
+    trend = get_usage_trend(tenant_id, window)
+
+    remaining = max(
+        usage["limit"] - usage["used"],
+        0,
+    )
+
+    consumed = trend["total_consumed"]
+    raw_daily_rate = consumed / window
+    today = datetime.now(timezone.utc).date()
+
+    if remaining == 0:
+        days_to_limit = 0
+        projected_date = today.isoformat()
+        risk_level = "blocked"
+        recommendation = (
+            "Limite atingido. Realize o upgrade "
+            "para continuar o consumo."
+        )
+    elif consumed == 0:
+        days_to_limit = None
+        projected_date = None
+        risk_level = "insufficient_data"
+        recommendation = (
+            "Ainda nao existem consumos suficientes "
+            "para calcular uma previsao."
+        )
+    else:
+        days_to_limit = ceil(
+            remaining / raw_daily_rate
+        )
+
+        projected_date = (
+            today + timedelta(days=days_to_limit)
+        ).isoformat()
+
+        if days_to_limit <= 3:
+            risk_level = "critical"
+            recommendation = (
+                "Upgrade urgente recomendado."
+            )
+        elif days_to_limit <= 7:
+            risk_level = "warning"
+            recommendation = (
+                "Planeje o upgrade nesta semana."
+            )
+        else:
+            risk_level = "stable"
+            recommendation = (
+                "Consumo dentro da previsao segura."
+            )
+
+    return {
+        "window_days": window,
+        "remaining": remaining,
+        "daily_rate": round(raw_daily_rate, 2),
+        "days_to_limit": days_to_limit,
+        "projected_exhaustion_date": projected_date,
+        "risk_level": risk_level,
+        "recommendation": recommendation,
     }
 
 
@@ -1029,6 +1095,51 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                     "has_more": has_more,
                     "next_offset": next_offset,
                 },
+            })
+            return
+
+        if path == "/api/usage/forecast":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            try:
+                window = int(
+                    query.get("window", ["7"])[0]
+                )
+            except (TypeError, ValueError):
+                self.send_json(400, {
+                    "error": "Janela de previsao invalida",
+                })
+                return
+
+            if window < 1 or window > 30:
+                self.send_json(400, {
+                    "error": (
+                        "window deve estar entre 1 e 30"
+                    ),
+                })
+                return
+
+            forecast = get_usage_forecast(
+                tenant_id,
+                window,
+            )
+
+            self.send_json(200, {
+                "tenant_id": tenant_id,
+                "plan": usage["plan"],
+                "used": usage["used"],
+                "limit": usage["limit"],
+                "forecast": forecast,
             })
             return
 
