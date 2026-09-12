@@ -77,6 +77,29 @@ def initialize_database():
         """)
 
         connection.execute("""
+            CREATE TABLE IF NOT EXISTS usage_risk_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL,
+                previous_risk_level TEXT,
+                risk_level TEXT NOT NULL,
+                days_to_limit INTEGER,
+                recommendation TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (tenant_id)
+                    REFERENCES usage_counters (tenant_id)
+            )
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS
+                idx_usage_risk_alerts_tenant_created
+            ON usage_risk_alerts (
+                tenant_id,
+                created_at DESC
+            )
+        """)
+
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS subscription_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tenant_id TEXT NOT NULL,
@@ -404,6 +427,145 @@ def get_usage_forecast(tenant_id, window=7):
         "projected_exhaustion_date": projected_date,
         "risk_level": risk_level,
         "recommendation": recommendation,
+    }
+
+
+def serialize_usage_risk_alert(row):
+    if row is None:
+        return None
+
+    return {
+        "id": row["id"],
+        "tenant_id": row["tenant_id"],
+        "previous_risk_level": (
+            row["previous_risk_level"]
+        ),
+        "risk_level": row["risk_level"],
+        "days_to_limit": row["days_to_limit"],
+        "recommendation": row["recommendation"],
+        "created_at": row["created_at"],
+    }
+
+
+def list_usage_risk_alerts(tenant_id, limit=10):
+    with connect_database() as connection:
+        rows = connection.execute("""
+            SELECT
+                id,
+                tenant_id,
+                previous_risk_level,
+                risk_level,
+                days_to_limit,
+                recommendation,
+                created_at
+            FROM usage_risk_alerts
+            WHERE tenant_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+        """, (
+            tenant_id,
+            limit,
+        )).fetchall()
+
+    return [
+        serialize_usage_risk_alert(row)
+        for row in rows
+    ]
+
+
+def evaluate_usage_risk(tenant_id, window=7):
+    forecast = get_usage_forecast(
+        tenant_id,
+        window,
+    )
+
+    current_risk = forecast["risk_level"]
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    with connect_database() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+
+        latest = connection.execute("""
+            SELECT
+                id,
+                tenant_id,
+                previous_risk_level,
+                risk_level,
+                days_to_limit,
+                recommendation,
+                created_at
+            FROM usage_risk_alerts
+            WHERE tenant_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        """, (tenant_id,)).fetchone()
+
+        previous_risk = (
+            latest["risk_level"]
+            if latest is not None
+            else None
+        )
+
+        if previous_risk == current_risk:
+            return {
+                "created": False,
+                "alert": serialize_usage_risk_alert(
+                    latest
+                ),
+                "forecast": forecast,
+            }
+
+        if (
+            previous_risk is None
+            and current_risk in {
+                "stable",
+                "insufficient_data",
+            }
+        ):
+            return {
+                "created": False,
+                "alert": None,
+                "forecast": forecast,
+            }
+
+        result = connection.execute("""
+            INSERT INTO usage_risk_alerts (
+                tenant_id,
+                previous_risk_level,
+                risk_level,
+                days_to_limit,
+                recommendation,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            tenant_id,
+            previous_risk,
+            current_risk,
+            forecast["days_to_limit"],
+            forecast["recommendation"],
+            timestamp,
+        ))
+
+        alert = connection.execute("""
+            SELECT
+                id,
+                tenant_id,
+                previous_risk_level,
+                risk_level,
+                days_to_limit,
+                recommendation,
+                created_at
+            FROM usage_risk_alerts
+            WHERE id = ?
+        """, (
+            result.lastrowid,
+        )).fetchone()
+
+    return {
+        "created": True,
+        "alert": serialize_usage_risk_alert(alert),
+        "forecast": forecast,
     }
 
 
@@ -1098,6 +1260,49 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             })
             return
 
+        if path == "/api/usage/alerts":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            try:
+                limit = int(
+                    query.get("limit", ["10"])[0]
+                )
+            except (TypeError, ValueError):
+                self.send_json(400, {
+                    "error": "Limite de alertas invalido",
+                })
+                return
+
+            if limit < 1 or limit > 50:
+                self.send_json(400, {
+                    "error": (
+                        "limit deve estar entre 1 e 50"
+                    ),
+                })
+                return
+
+            alerts = list_usage_risk_alerts(
+                tenant_id,
+                limit,
+            )
+
+            self.send_json(200, {
+                "tenant_id": tenant_id,
+                "alerts": alerts,
+                "total": len(alerts),
+            })
+            return
+
         if path == "/api/usage/forecast":
             usage = get_usage(tenant_id)
 
@@ -1201,6 +1406,51 @@ class SaaSHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path, tenant_id = self.request_data()
+
+        if path == "/api/usage/alerts/evaluate":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            try:
+                window = int(
+                    query.get("window", ["7"])[0]
+                )
+            except (TypeError, ValueError):
+                self.send_json(400, {
+                    "error": "Janela de avaliacao invalida",
+                })
+                return
+
+            if window < 1 or window > 30:
+                self.send_json(400, {
+                    "error": (
+                        "window deve estar entre 1 e 30"
+                    ),
+                })
+                return
+
+            evaluation = evaluate_usage_risk(
+                tenant_id,
+                window,
+            )
+
+            self.send_json(
+                201 if evaluation["created"] else 200,
+                {
+                    "tenant_id": tenant_id,
+                    **evaluation,
+                },
+            )
+            return
 
         if path == "/api/tenants":
             data = self.read_json()

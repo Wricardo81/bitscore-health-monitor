@@ -1355,5 +1355,167 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def test_risk_evaluation_creates_warning_transition(self):
+        self.create_tenant(
+            "tenant-risk-warning",
+            limit=10,
+        )
+
+        endpoint = (
+            "/api/usage/consume"
+            "?tenant_id=tenant-risk-warning"
+        )
+
+        self.consume(endpoint)
+        self.consume(endpoint)
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/alerts/evaluate"
+                "?tenant_id=tenant-risk-warning"
+                "&window=1"
+            ),
+            method="POST",
+        )
+
+        self.assertEqual(status, 201)
+        self.assertTrue(body["created"])
+        self.assertEqual(
+            body["alert"]["risk_level"],
+            "warning",
+        )
+        self.assertIsNone(
+            body["alert"]["previous_risk_level"]
+        )
+
+    def test_risk_evaluation_does_not_duplicate_state(self):
+        self.create_tenant(
+            "tenant-risk-deduplication",
+            limit=10,
+        )
+
+        consume_endpoint = (
+            "/api/usage/consume"
+            "?tenant_id=tenant-risk-deduplication"
+        )
+
+        self.consume(consume_endpoint)
+        self.consume(consume_endpoint)
+
+        evaluate_endpoint = (
+            "/api/usage/alerts/evaluate"
+            "?tenant_id=tenant-risk-deduplication"
+            "&window=1"
+        )
+
+        first_status, first, _ = self.request(
+            evaluate_endpoint,
+            method="POST",
+        )
+        second_status, second, _ = self.request(
+            evaluate_endpoint,
+            method="POST",
+        )
+
+        _, history, _ = self.request(
+            (
+                "/api/usage/alerts"
+                "?tenant_id=tenant-risk-deduplication"
+            )
+        )
+
+        self.assertEqual(first_status, 201)
+        self.assertEqual(second_status, 200)
+        self.assertTrue(first["created"])
+        self.assertFalse(second["created"])
+        self.assertEqual(history["total"], 1)
+
+    def test_risk_evaluation_records_recovery_after_upgrade(self):
+        self.create_tenant(
+            "tenant-risk-recovery",
+            limit=10,
+        )
+
+        consume_endpoint = (
+            "/api/usage/consume"
+            "?tenant_id=tenant-risk-recovery"
+        )
+
+        self.consume(consume_endpoint)
+        self.consume(consume_endpoint)
+
+        self.request(
+            (
+                "/api/usage/alerts/evaluate"
+                "?tenant_id=tenant-risk-recovery"
+                "&window=1"
+            ),
+            method="POST",
+        )
+
+        self.request(
+            (
+                "/api/usage/upgrade"
+                "?tenant_id=tenant-risk-recovery"
+            ),
+            method="POST",
+            payload={"plan": "Growth"},
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/alerts/evaluate"
+                "?tenant_id=tenant-risk-recovery"
+                "&window=1"
+            ),
+            method="POST",
+        )
+
+        self.assertEqual(status, 201)
+        self.assertEqual(
+            body["alert"]["previous_risk_level"],
+            "warning",
+        )
+        self.assertEqual(
+            body["alert"]["risk_level"],
+            "stable",
+        )
+
+    def test_risk_alert_history_remains_tenant_isolated(self):
+        self.create_tenant(
+            "tenant-risk-alpha",
+            limit=10,
+        )
+        self.create_tenant("tenant-risk-beta")
+
+        endpoint = (
+            "/api/usage/consume"
+            "?tenant_id=tenant-risk-alpha"
+        )
+
+        self.consume(endpoint)
+        self.consume(endpoint)
+
+        self.request(
+            (
+                "/api/usage/alerts/evaluate"
+                "?tenant_id=tenant-risk-alpha"
+                "&window=1"
+            ),
+            method="POST",
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/usage/alerts"
+                "?tenant_id=tenant-risk-beta"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total"], 0)
+        self.assertEqual(body["alerts"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
