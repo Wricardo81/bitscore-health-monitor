@@ -329,6 +329,29 @@
       color: #ff6b6b;
     }
 
+
+    .risk-alert-log {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid #233554;
+    }
+
+    .risk-alert-log span {
+      display: block;
+      margin-bottom: 5px;
+      color: #8892b0;
+      font-size: 0.76rem;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    #usageRiskAlertStatus {
+      margin: 0;
+      color: #ccd6f6;
+      font-size: 0.84rem;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -393,6 +416,16 @@
             <p id="usageForecastMessage">
                 Analisando a tendencia dos ultimos sete dias.
             </p>
+            <div class="risk-alert-log">
+                <span>Registro de risco</span>
+                <p
+                    id="usageRiskAlertStatus"
+                    aria-live="polite"
+                >
+                    Verificando mudancas de risco...
+                </p>
+            </div>
+
         </div>
 
     </section>
@@ -973,6 +1006,64 @@
     }
     }
 
+    async function loadUsageRiskAlerts() {
+    const status = document.querySelector(
+        "#usageRiskAlertStatus"
+    );
+
+    try {
+        const response = await fetch(
+            "/api/usage/alerts?limit=3"
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        if (data.total === 0) {
+            status.textContent =
+                "Nenhuma mudanca de risco registrada.";
+            return;
+        }
+
+        const latest = data.alerts[0];
+        const previous = (
+            latest.previous_risk_level || "inicio"
+        );
+
+        status.textContent =
+            `Ultima mudanca: ${previous} para ` +
+            `${latest.risk_level}.`;
+    } catch (error) {
+        status.textContent =
+            `Falha ao consultar alertas: ${error.message}`;
+    }
+    }
+
+    async function evaluateUsageRisk() {
+    const response = await fetch(
+        "/api/usage/alerts/evaluate?window=7",
+        {
+            method: "POST"
+        }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(
+            data.error || `HTTP ${response.status}`
+        );
+    }
+
+    await loadUsageRiskAlerts();
+    return data;
+    }
+
     async function consumeUsage() {
     const idempotencyKey = crypto.randomUUID();
 
@@ -990,6 +1081,7 @@
         await Promise.all([
             loadUsageTrend(),
             loadUsageForecast(),
+            evaluateUsageRisk(),
         ]);
         return;
     }
@@ -1034,6 +1126,7 @@
             loadSubscriptionAudit(),
             loadSubscriptionSummary(),
             loadUsageForecast(),
+            evaluateUsageRisk(),
         ]);
     } catch (error) {
         document.querySelector("#usageAlert").textContent =
@@ -1055,6 +1148,7 @@
     loadUsage();
     loadUsageTrend();
     loadUsageForecast();
+    evaluateUsageRisk();
     loadSubscriptionAudit();
     loadSubscriptionSummary();
   </script>
