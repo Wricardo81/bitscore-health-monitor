@@ -569,6 +569,45 @@ def evaluate_usage_risk(tenant_id, window=7):
     }
 
 
+def get_database_readiness():
+    started_at = time.perf_counter()
+
+    try:
+        with connect_database() as connection:
+            check = connection.execute(
+                "PRAGMA quick_check"
+            ).fetchone()[0]
+
+            tenant_count = connection.execute(
+                "SELECT COUNT(*) FROM usage_counters"
+            ).fetchone()[0]
+
+        ready = check == "ok"
+
+        return {
+            "ready": ready,
+            "database": "sqlite",
+            "check": check,
+            "tenant_count": tenant_count,
+            "latency_ms": round(
+                (time.perf_counter() - started_at) * 1000,
+                2,
+            ),
+        }
+
+    except sqlite3.Error:
+        return {
+            "ready": False,
+            "database": "sqlite",
+            "check": "database_error",
+            "tenant_count": None,
+            "latency_ms": round(
+                (time.perf_counter() - started_at) * 1000,
+                2,
+            ),
+        }
+
+
 def list_tenants():
     with connect_database() as connection:
         rows = connection.execute("""
@@ -991,6 +1030,22 @@ class SaaSHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path, tenant_id = self.request_data()
+
+        if path == "/api/ready":
+            readiness = get_database_readiness()
+
+            self.send_json(
+                200 if readiness["ready"] else 503,
+                {
+                    "status": (
+                        "ready"
+                        if readiness["ready"]
+                        else "not_ready"
+                    ),
+                    **readiness,
+                },
+            )
+            return
 
         if path == "/api/health":
             self.send_json(200, {
