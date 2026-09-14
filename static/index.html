@@ -365,6 +365,40 @@
       color: #ff6b6b;
     }
 
+
+    .tenant-switcher {
+      display: grid;
+      gap: 7px;
+      margin: 18px 0;
+      padding: 14px;
+      border: 1px solid #233554;
+      border-radius: 12px;
+      background: #0d1f38;
+    }
+
+    .tenant-switcher label {
+      color: #a8b2d1;
+      font-size: 0.78rem;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    #tenantSelector {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid #3d5275;
+      border-radius: 9px;
+      background: #0a192f;
+      color: #ffffff;
+      font: inherit;
+    }
+
+    #tenantSelector:focus {
+      border-color: #64ffda;
+      outline: 2px solid rgba(100, 255, 218, 0.18);
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -386,6 +420,21 @@
     >
         Verificando banco de dados...
     </p>
+
+    <div class="tenant-switcher">
+        <label for="tenantSelector">
+            Empresa selecionada
+        </label>
+
+        <select
+            id="tenantSelector"
+            aria-label="Selecionar empresa"
+        >
+            <option value="">
+                Carregando empresas...
+            </option>
+        </select>
+    </div>
 
     <section class="usage-card">
         <h2>Consumo do plano</h2>
@@ -574,6 +623,76 @@
   </main>
 
   <script>
+    let selectedTenantId =
+      "engenharia-de-bits";
+
+    function tenantApiUrl(path) {
+      const url = new URL(
+        path,
+        window.location.origin
+      );
+
+      url.searchParams.set(
+        "tenant_id",
+        selectedTenantId
+      );
+
+      return `${url.pathname}${url.search}`;
+    }
+
+    async function loadTenantDirectory() {
+      const selector = document.querySelector(
+        "#tenantSelector"
+      );
+
+      const response = await fetch("/api/tenants");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || `HTTP ${response.status}`
+        );
+      }
+
+      selector.replaceChildren();
+
+      for (const tenant of data.tenants) {
+        const option = document.createElement(
+          "option"
+        );
+
+        option.value = tenant.tenant_id;
+        option.textContent =
+          `${tenant.tenant_id} - ${tenant.plan}`;
+
+        selector.appendChild(option);
+      }
+
+      const selectedExists = data.tenants.some(
+        tenant => (
+          tenant.tenant_id === selectedTenantId
+        )
+      );
+
+      if (!selectedExists && data.tenants.length > 0) {
+        selectedTenantId =
+          data.tenants[0].tenant_id;
+      }
+
+      selector.value = selectedTenantId;
+    }
+
+    async function refreshTenantDashboard() {
+      await Promise.all([
+        loadUsage(),
+        loadUsageTrend(),
+        loadUsageForecast(),
+        evaluateUsageRisk(),
+        loadSubscriptionAudit(true),
+        loadSubscriptionSummary(),
+      ]);
+    }
+
     async function checkReadiness() {
       const readiness = document.querySelector(
         "#readiness"
@@ -593,18 +712,18 @@
 
         if (!response.ok || !data.ready) {
           readiness.textContent =
-            "? Banco de dados indisponivel";
+            "Banco de dados indisponivel";
           return;
         }
 
         readiness.textContent =
-          "? Banco pronto" +
+          "Banco pronto" +
           ` | ${data.latency_ms} ms` +
           ` | ${data.tenant_count} tenant(s)`;
       } catch (error) {
         readiness.dataset.ready = "false";
         readiness.textContent =
-          `? Falha no readiness: ${error.message}`;
+          `Falha no readiness: ${error.message}`;
       }
     }
 
@@ -735,8 +854,10 @@
 
     try {
         const response = await fetch(
-            "/api/subscription/summary?" +
-            buildAuditQuery()
+            tenantApiUrl(
+                "/api/subscription/summary?" +
+                buildAuditQuery()
+            )
         );
 
         const data = await response.json();
@@ -802,8 +923,10 @@
 
     try {
         const response = await fetch(
-            "/api/subscription/events?" +
-            buildAuditQuery()
+            tenantApiUrl(
+                "/api/subscription/events?" +
+                buildAuditQuery()
+            )
         );
 
         const data = await response.json();
@@ -923,9 +1046,10 @@
 
         const query = parameters.toString();
 
-        window.location.href =
+        window.location.href = tenantApiUrl(
             "/api/subscription/events/export" +
-            (query ? `?${query}` : "");
+            (query ? `?${query}` : "")
+        );
     }
 
     document
@@ -936,7 +1060,9 @@
     );
 
     async function loadUsage() {
-    const response = await fetch("/api/usage");
+    const response = await fetch(
+        tenantApiUrl("/api/usage")
+    );
     const data = await response.json();
     renderUsage(data);
     }
@@ -952,7 +1078,9 @@
 
     try {
         const response = await fetch(
-            "/api/usage/trend?days=7"
+            tenantApiUrl(
+                "/api/usage/trend?days=7"
+            )
         );
 
         const data = await response.json();
@@ -1025,7 +1153,9 @@
 
     try {
         const response = await fetch(
-            "/api/usage/forecast?window=7"
+            tenantApiUrl(
+                "/api/usage/forecast?window=7"
+            )
         );
 
         const data = await response.json();
@@ -1074,7 +1204,9 @@
 
     try {
         const response = await fetch(
-            "/api/usage/alerts?limit=3"
+            tenantApiUrl(
+                "/api/usage/alerts?limit=3"
+            )
         );
 
         const data = await response.json();
@@ -1107,7 +1239,9 @@
 
     async function evaluateUsageRisk() {
     const response = await fetch(
-        "/api/usage/alerts/evaluate?window=7",
+        tenantApiUrl(
+            "/api/usage/alerts/evaluate?window=7"
+        ),
         {
             method: "POST"
         }
@@ -1128,7 +1262,9 @@
     async function consumeUsage() {
     const idempotencyKey = crypto.randomUUID();
 
-    const response = await fetch("/api/usage/consume", {
+    const response = await fetch(
+        tenantApiUrl("/api/usage/consume"),
+        {
         method: "POST",
         headers: {
             "Idempotency-Key": idempotencyKey
@@ -1162,7 +1298,9 @@
     button.textContent = "Atualizando...";
 
     try {
-        const response = await fetch("/api/usage/upgrade", {
+        const response = await fetch(
+            tenantApiUrl("/api/usage/upgrade"),
+            {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
@@ -1199,6 +1337,15 @@
     }
 
     document
+    .querySelector("#tenantSelector")
+    .addEventListener("change", async event => {
+        selectedTenantId = event.target.value;
+        auditOffset = 0;
+
+        await refreshTenantDashboard();
+    });
+
+    document
     .querySelector("#consume")
     .addEventListener("click", consumeUsage);
 
@@ -1206,12 +1353,24 @@
     .querySelector("#upgrade")
     .addEventListener("click", upgradePlan);
 
-    loadUsage();
-    loadUsageTrend();
-    loadUsageForecast();
-    evaluateUsageRisk();
-    loadSubscriptionAudit();
-    loadSubscriptionSummary();
+    async function initializeDashboard() {
+      try {
+        await Promise.all([
+          checkHealth(),
+          checkReadiness(),
+        ]);
+
+        await loadTenantDirectory();
+        await refreshTenantDashboard();
+      } catch (error) {
+        document.querySelector(
+          "#usageAlert"
+        ).textContent =
+          `Falha ao iniciar dashboard: ${error.message}`;
+      }
+    }
+
+    initializeDashboard();
   </script>
 </body>
 </html>

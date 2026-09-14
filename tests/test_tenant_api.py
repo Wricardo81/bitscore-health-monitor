@@ -1547,5 +1547,31 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def test_dashboard_has_multi_tenant_switcher(self):
+        status, content, _ = self.request_text("/")
+
+        self.assertEqual(status, 200)
+        self.assertIn(
+            'id="tenantSelector"',
+            content,
+        )
+        self.assertIn(
+            "function tenantApiUrl(",
+            content,
+        )
+        self.assertIn(
+            '"tenant_id"',
+            content,
+        )
+        self.assertIn(
+            "async function loadTenantDirectory()",
+            content,
+        )
+        self.assertIn(
+            "async function refreshTenantDashboard()",
+            content,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
