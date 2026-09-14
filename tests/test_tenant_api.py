@@ -1517,5 +1517,35 @@ class TenantApiTests(unittest.TestCase):
         self.assertEqual(body["alerts"], [])
 
 
+    def test_readiness_checks_sqlite_database(self):
+        status, body, _ = self.request("/api/ready")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "ready")
+        self.assertTrue(body["ready"])
+        self.assertEqual(body["database"], "sqlite")
+        self.assertEqual(body["check"], "ok")
+        self.assertIsInstance(
+            body["tenant_count"],
+            int,
+        )
+        self.assertGreaterEqual(
+            body["latency_ms"],
+            0,
+        )
+
+    def test_readiness_has_request_id(self):
+        status, body, headers = self.request(
+            "/api/ready"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn("request_id", body)
+        self.assertEqual(
+            headers["X-Request-ID"],
+            body["request_id"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

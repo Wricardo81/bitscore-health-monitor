@@ -352,6 +352,19 @@
       font-size: 0.84rem;
     }
 
+
+    #readiness {
+      color: #a8b2d1;
+    }
+
+    #readiness[data-ready="true"] {
+      color: #64ffda;
+    }
+
+    #readiness[data-ready="false"] {
+      color: #ff6b6b;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -365,6 +378,14 @@
     <p id="service"></p>
     <p id="uptime"></p>
     <p id="requestId"></p>
+
+    <p
+        id="readiness"
+        data-ready="checking"
+        aria-live="polite"
+    >
+        Verificando banco de dados...
+    </p>
 
     <section class="usage-card">
         <h2>Consumo do plano</h2>
@@ -553,6 +574,40 @@
   </main>
 
   <script>
+    async function checkReadiness() {
+      const readiness = document.querySelector(
+        "#readiness"
+      );
+
+      readiness.dataset.ready = "checking";
+      readiness.textContent =
+        "Verificando banco de dados...";
+
+      try {
+        const response = await fetch("/api/ready");
+        const data = await response.json();
+
+        readiness.dataset.ready = String(
+          response.ok && data.ready
+        );
+
+        if (!response.ok || !data.ready) {
+          readiness.textContent =
+            "? Banco de dados indisponivel";
+          return;
+        }
+
+        readiness.textContent =
+          "? Banco pronto" +
+          ` | ${data.latency_ms} ms` +
+          ` | ${data.tenant_count} tenant(s)`;
+      } catch (error) {
+        readiness.dataset.ready = "false";
+        readiness.textContent =
+          `? Falha no readiness: ${error.message}`;
+      }
+    }
+
     async function checkHealth() {
       const status = document.querySelector("#status");
       status.textContent = "Verificando...";
@@ -583,9 +638,15 @@
 
     document
       .querySelector("#refresh")
-      .addEventListener("click", checkHealth);
+      .addEventListener("click", async () => {
+        await Promise.all([
+          checkHealth(),
+          checkReadiness(),
+        ]);
+      });
 
     checkHealth();
+    checkReadiness();
 
     function renderUsage(data) {
     document.querySelector("#usageText").textContent =
