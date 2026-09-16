@@ -1672,5 +1672,143 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def create_outbox_notification(self, tenant_id):
+        self.create_tenant(
+            tenant_id,
+            limit=10,
+        )
+
+        endpoint = (
+            "/api/usage/consume"
+            f"?tenant_id={tenant_id}"
+        )
+
+        self.consume(endpoint)
+        self.consume(endpoint)
+
+        return self.request(
+            (
+                "/api/usage/alerts/evaluate"
+                f"?tenant_id={tenant_id}"
+                "&window=1"
+            ),
+            method="POST",
+        )
+
+    def test_risk_transition_creates_pending_notification(self):
+        tenant_id = "tenant-outbox-created"
+
+        status, evaluation, _ = (
+            self.create_outbox_notification(
+                tenant_id
+            )
+        )
+
+        _, body, _ = self.request(
+            (
+                "/api/notifications"
+                f"?tenant_id={tenant_id}"
+                "&status=pending"
+            )
+        )
+
+        self.assertEqual(status, 201)
+        self.assertTrue(evaluation["created"])
+        self.assertEqual(body["total"], 1)
+        self.assertEqual(
+            body["notifications"][0]["status"],
+            "pending",
+        )
+        self.assertEqual(
+            body["notifications"][0]["event_type"],
+            "usage_risk_changed",
+        )
+
+    def test_repeated_risk_does_not_duplicate_notification(self):
+        tenant_id = "tenant-outbox-deduplication"
+        self.create_outbox_notification(tenant_id)
+
+        self.request(
+            (
+                "/api/usage/alerts/evaluate"
+                f"?tenant_id={tenant_id}"
+                "&window=1"
+            ),
+            method="POST",
+        )
+
+        _, body, _ = self.request(
+            (
+                "/api/notifications"
+                f"?tenant_id={tenant_id}"
+                "&status=all"
+            )
+        )
+
+        self.assertEqual(body["total"], 1)
+
+    def test_pending_notification_can_be_dispatched(self):
+        tenant_id = "tenant-outbox-dispatch"
+        self.create_outbox_notification(tenant_id)
+
+        status, body, _ = self.request(
+            (
+                "/api/notifications/dispatch"
+                f"?tenant_id={tenant_id}"
+            ),
+            method="POST",
+        )
+
+        _, pending, _ = self.request(
+            (
+                "/api/notifications"
+                f"?tenant_id={tenant_id}"
+                "&status=pending"
+            )
+        )
+
+        _, delivered, _ = self.request(
+            (
+                "/api/notifications"
+                f"?tenant_id={tenant_id}"
+                "&status=delivered"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(body["dispatched"])
+        self.assertEqual(
+            body["notification"]["status"],
+            "delivered",
+        )
+        self.assertEqual(
+            body["notification"]["attempts"],
+            1,
+        )
+        self.assertIsNotNone(
+            body["notification"]["delivered_at"]
+        )
+        self.assertEqual(pending["total"], 0)
+        self.assertEqual(delivered["total"], 1)
+
+    def test_notification_outbox_remains_tenant_isolated(self):
+        self.create_outbox_notification(
+            "tenant-outbox-alpha"
+        )
+        self.create_tenant("tenant-outbox-beta")
+
+        status, body, _ = self.request(
+            (
+                "/api/notifications"
+                "?tenant_id=tenant-outbox-beta"
+                "&status=all"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total"], 0)
+        self.assertEqual(body["notifications"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

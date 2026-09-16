@@ -460,6 +460,34 @@
       }
     }
 
+
+    .notification-outbox {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #233554;
+    }
+
+    #notificationOutboxStatus {
+      margin: 0;
+      color: #a8b2d1;
+      font-size: 0.82rem;
+    }
+
+    #dispatchNotification {
+      flex-shrink: 0;
+    }
+
+    @media (max-width: 520px) {
+      .notification-outbox {
+        align-items: stretch;
+        flex-direction: column;
+      }
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -601,6 +629,21 @@
                 >
                     Verificando mudancas de risco...
                 </p>
+                <div class="notification-outbox">
+                    <p
+                        id="notificationOutboxStatus"
+                        aria-live="polite"
+                    >
+                        Consultando fila de notificacoes...
+                    </p>
+
+                    <button
+                        id="dispatchNotification"
+                        type="button"
+                    >
+                        Processar fila
+                    </button>
+                </div>
             </div>
 
         </div>
@@ -798,6 +841,7 @@
         loadSubscriptionAudit(true),
         loadSubscriptionSummary(),
         loadPlatformSummary(),
+        loadNotificationOutbox(),
       ]);
     }
 
@@ -1412,8 +1456,86 @@
         );
     }
 
-    await loadUsageRiskAlerts();
+    await Promise.all([
+        loadUsageRiskAlerts(),
+        loadNotificationOutbox(),
+    ]);
+
     return data;
+    }
+
+    async function loadNotificationOutbox() {
+    const status = document.querySelector(
+        "#notificationOutboxStatus"
+    );
+
+    try {
+        const response = await fetch(
+            tenantApiUrl(
+                "/api/notifications?status=pending"
+            )
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        status.textContent = data.total === 1
+            ? "1 notificacao aguardando envio."
+            : `${data.total} notificacoes aguardando envio.`;
+    } catch (error) {
+        status.textContent =
+            `Falha ao consultar fila: ${error.message}`;
+    }
+    }
+
+    async function dispatchNotification() {
+    const button = document.querySelector(
+        "#dispatchNotification"
+    );
+
+    button.disabled = true;
+    button.textContent = "Processando...";
+
+    try {
+        const response = await fetch(
+            tenantApiUrl(
+                "/api/notifications/dispatch"
+            ),
+            {
+                method: "POST"
+            }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data.error || `HTTP ${response.status}`
+            );
+        }
+
+        await loadNotificationOutbox();
+
+        if (!data.dispatched) {
+            document.querySelector(
+                "#notificationOutboxStatus"
+            ).textContent =
+                "Nenhuma notificacao pendente.";
+        }
+    } catch (error) {
+        document.querySelector(
+            "#notificationOutboxStatus"
+        ).textContent =
+            `Falha no processamento: ${error.message}`;
+    } finally {
+        button.disabled = false;
+        button.textContent = "Processar fila";
+    }
     }
 
     async function consumeUsage() {
@@ -1502,6 +1624,13 @@
 
         await refreshTenantDashboard();
     });
+
+    document
+    .querySelector("#dispatchNotification")
+    .addEventListener(
+        "click",
+        dispatchNotification
+    );
 
     document
     .querySelector("#consume")
