@@ -100,6 +100,36 @@ def initialize_database():
         """)
 
         connection.execute("""
+            CREATE TABLE IF NOT EXISTS notification_outbox (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL,
+                alert_id INTEGER NOT NULL,
+                channel TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                delivered_at TEXT,
+                UNIQUE (alert_id, channel),
+                FOREIGN KEY (tenant_id)
+                    REFERENCES usage_counters (tenant_id),
+                FOREIGN KEY (alert_id)
+                    REFERENCES usage_risk_alerts (id)
+            )
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS
+                idx_notification_outbox_tenant_status
+            ON notification_outbox (
+                tenant_id,
+                status,
+                created_at
+            )
+        """)
+
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS subscription_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tenant_id TEXT NOT NULL,
@@ -562,11 +592,153 @@ def evaluate_usage_risk(tenant_id, window=7):
             result.lastrowid,
         )).fetchone()
 
+        payload = json.dumps(
+            {
+                "tenant_id": tenant_id,
+                "previous_risk_level": previous_risk,
+                "risk_level": current_risk,
+                "days_to_limit": forecast["days_to_limit"],
+                "recommendation": forecast["recommendation"],
+            },
+            ensure_ascii=False,
+        )
+
+        connection.execute("""
+            INSERT OR IGNORE INTO notification_outbox (
+                tenant_id,
+                alert_id,
+                channel,
+                event_type,
+                payload,
+                status,
+                attempts,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)
+        """, (
+            tenant_id,
+            alert["id"],
+            "email",
+            "usage_risk_changed",
+            payload,
+            timestamp,
+        ))
+
     return {
         "created": True,
         "alert": serialize_usage_risk_alert(alert),
         "forecast": forecast,
     }
+
+
+def serialize_notification(row):
+    if row is None:
+        return None
+
+    return {
+        "id": row["id"],
+        "tenant_id": row["tenant_id"],
+        "alert_id": row["alert_id"],
+        "channel": row["channel"],
+        "event_type": row["event_type"],
+        "payload": json.loads(row["payload"]),
+        "status": row["status"],
+        "attempts": row["attempts"],
+        "created_at": row["created_at"],
+        "delivered_at": row["delivered_at"],
+    }
+
+
+def list_notifications(
+    tenant_id,
+    status="pending",
+    limit=20,
+):
+    with connect_database() as connection:
+        rows = connection.execute("""
+            SELECT
+                id,
+                tenant_id,
+                alert_id,
+                channel,
+                event_type,
+                payload,
+                status,
+                attempts,
+                created_at,
+                delivered_at
+            FROM notification_outbox
+            WHERE tenant_id = ?
+              AND (? = 'all' OR status = ?)
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+        """, (
+            tenant_id,
+            status,
+            status,
+            limit,
+        )).fetchall()
+
+    return [
+        serialize_notification(row)
+        for row in rows
+    ]
+
+
+def dispatch_next_notification(tenant_id):
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    with connect_database() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+
+        pending = connection.execute("""
+            SELECT id
+            FROM notification_outbox
+            WHERE tenant_id = ?
+              AND status = 'pending'
+            ORDER BY created_at, id
+            LIMIT 1
+        """, (tenant_id,)).fetchone()
+
+        if pending is None:
+            return None
+
+        connection.execute("""
+            UPDATE notification_outbox
+            SET
+                status = 'delivered',
+                attempts = attempts + 1,
+                delivered_at = ?
+            WHERE id = ?
+              AND tenant_id = ?
+              AND status = 'pending'
+        """, (
+            timestamp,
+            pending["id"],
+            tenant_id,
+        ))
+
+        delivered = connection.execute("""
+            SELECT
+                id,
+                tenant_id,
+                alert_id,
+                channel,
+                event_type,
+                payload,
+                status,
+                attempts,
+                created_at,
+                delivered_at
+            FROM notification_outbox
+            WHERE id = ?
+              AND tenant_id = ?
+        """, (
+            pending["id"],
+            tenant_id,
+        )).fetchone()
+
+    return serialize_notification(delivered)
 
 
 def get_database_readiness():
@@ -1393,6 +1565,49 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             })
             return
 
+        if path == "/api/notifications":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            status = str(
+                query.get("status", ["pending"])[0]
+            ).strip().lower()
+
+            if status not in {
+                "pending",
+                "delivered",
+                "all",
+            }:
+                self.send_json(400, {
+                    "error": (
+                        "status deve ser pending, "
+                        "delivered ou all"
+                    ),
+                })
+                return
+
+            notifications = list_notifications(
+                tenant_id,
+                status,
+            )
+
+            self.send_json(200, {
+                "tenant_id": tenant_id,
+                "status": status,
+                "notifications": notifications,
+                "total": len(notifications),
+            })
+            return
+
         if path == "/api/usage/alerts":
             usage = get_usage(tenant_id)
 
@@ -1539,6 +1754,26 @@ class SaaSHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path, tenant_id = self.request_data()
+
+        if path == "/api/notifications/dispatch":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            notification = dispatch_next_notification(
+                tenant_id
+            )
+
+            self.send_json(200, {
+                "tenant_id": tenant_id,
+                "dispatched": notification is not None,
+                "notification": notification,
+            })
+            return
 
         if path == "/api/usage/alerts/evaluate":
             usage = get_usage(tenant_id)
