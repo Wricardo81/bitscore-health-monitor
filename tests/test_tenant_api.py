@@ -1573,5 +1573,104 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def test_platform_summary_counts_tenants_and_plans(self):
+        _, before, _ = self.request(
+            "/api/platform/summary"
+        )
+
+        before_summary = before["summary"]
+
+        self.create_tenant(
+            "tenant-platform-start",
+            plan="Start",
+            limit=100,
+        )
+        self.create_tenant(
+            "tenant-platform-growth",
+            plan="Growth",
+            limit=500,
+        )
+
+        status, body, headers = self.request(
+            "/api/platform/summary"
+        )
+
+        summary = body["summary"]
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["scope"], "platform")
+        self.assertEqual(
+            summary["total_tenants"],
+            before_summary["total_tenants"] + 2,
+        )
+        self.assertEqual(
+            summary["plans"]["Start"],
+            before_summary["plans"]["Start"] + 1,
+        )
+        self.assertEqual(
+            summary["plans"]["Growth"],
+            before_summary["plans"]["Growth"] + 1,
+        )
+        self.assertEqual(
+            headers["X-Request-ID"],
+            body["request_id"],
+        )
+
+    def test_platform_summary_counts_risk_levels(self):
+        _, before, _ = self.request(
+            "/api/platform/summary"
+        )
+
+        before_summary = before["summary"]
+
+        self.create_tenant(
+            "tenant-platform-warning",
+            limit=5,
+        )
+        self.create_tenant(
+            "tenant-platform-blocked",
+            limit=2,
+        )
+
+        warning_endpoint = (
+            "/api/usage/consume"
+            "?tenant_id=tenant-platform-warning"
+        )
+        blocked_endpoint = (
+            "/api/usage/consume"
+            "?tenant_id=tenant-platform-blocked"
+        )
+
+        for _ in range(4):
+            self.consume(warning_endpoint)
+
+        for _ in range(2):
+            self.consume(blocked_endpoint)
+
+        status, body, _ = self.request(
+            "/api/platform/summary"
+        )
+
+        summary = body["summary"]
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            summary["warning_tenants"],
+            before_summary["warning_tenants"] + 1,
+        )
+        self.assertEqual(
+            summary["blocked_tenants"],
+            before_summary["blocked_tenants"] + 1,
+        )
+        self.assertEqual(
+            summary["total_used"],
+            before_summary["total_used"] + 6,
+        )
+        self.assertEqual(
+            summary["total_capacity"],
+            before_summary["total_capacity"] + 7,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

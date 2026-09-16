@@ -399,6 +399,67 @@
       outline: 2px solid rgba(100, 255, 218, 0.18);
     }
 
+
+    .platform-overview {
+      margin: 18px 0;
+    }
+
+    .platform-overview h2 {
+      margin-bottom: 12px;
+    }
+
+    .platform-overview-grid {
+      display: grid;
+      grid-template-columns: repeat(
+        2,
+        minmax(0, 1fr)
+      );
+      gap: 10px;
+    }
+
+    .platform-overview-card {
+      min-width: 0;
+      padding: 13px;
+      border: 1px solid #233554;
+      border-radius: 12px;
+      background: #0d1f38;
+    }
+
+    .platform-overview-card span {
+      display: block;
+      margin-bottom: 6px;
+      color: #a8b2d1;
+      font-size: 0.76rem;
+    }
+
+    .platform-overview-card strong {
+      color: #64ffda;
+      font-size: 1.35rem;
+    }
+
+    .platform-overview-card--warning strong {
+      color: #ffd166;
+    }
+
+    .platform-overview-card--blocked strong {
+      color: #ff6b6b;
+    }
+
+    #platformSummaryStatus {
+      margin: 12px 0 0;
+      color: #a8b2d1;
+      font-size: 0.82rem;
+    }
+
+    @media (min-width: 680px) {
+      .platform-overview-grid {
+        grid-template-columns: repeat(
+          4,
+          minmax(0, 1fr)
+        );
+      }
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -435,6 +496,52 @@
             </option>
         </select>
     </div>
+
+    <section
+        class="platform-overview"
+        aria-label="Visao geral da plataforma"
+    >
+        <h2>Visao geral da plataforma</h2>
+
+        <div class="platform-overview-grid">
+            <article class="platform-overview-card">
+                <span>Empresas</span>
+                <strong id="platformTenantTotal">0</strong>
+            </article>
+
+            <article class="platform-overview-card">
+                <span>Consumo total</span>
+                <strong id="platformUsageTotal">0 / 0</strong>
+            </article>
+
+            <article
+                class="
+                    platform-overview-card
+                    platform-overview-card--warning
+                "
+            >
+                <span>Em atencao</span>
+                <strong id="platformWarningTotal">0</strong>
+            </article>
+
+            <article
+                class="
+                    platform-overview-card
+                    platform-overview-card--blocked
+                "
+            >
+                <span>Bloqueadas</span>
+                <strong id="platformBlockedTotal">0</strong>
+            </article>
+        </div>
+
+        <p
+            id="platformSummaryStatus"
+            aria-live="polite"
+        >
+            Carregando resumo global...
+        </p>
+    </section>
 
     <section class="usage-card">
         <h2>Consumo do plano</h2>
@@ -690,7 +797,57 @@
         evaluateUsageRisk(),
         loadSubscriptionAudit(true),
         loadSubscriptionSummary(),
+        loadPlatformSummary(),
       ]);
+    }
+
+    async function loadPlatformSummary() {
+      const status = document.querySelector(
+        "#platformSummaryStatus"
+      );
+
+      try {
+        const response = await fetch(
+          "/api/platform/summary"
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || `HTTP ${response.status}`
+          );
+        }
+
+        const summary = data.summary;
+
+        document.querySelector(
+          "#platformTenantTotal"
+        ).textContent = summary.total_tenants;
+
+        document.querySelector(
+          "#platformUsageTotal"
+        ).textContent =
+          `${summary.total_used} / ` +
+          `${summary.total_capacity}`;
+
+        document.querySelector(
+          "#platformWarningTotal"
+        ).textContent = summary.warning_tenants;
+
+        document.querySelector(
+          "#platformBlockedTotal"
+        ).textContent = summary.blocked_tenants;
+
+        status.textContent =
+          `Uso global: ${summary.usage_percentage}%` +
+          ` | Start: ${summary.plans.Start}` +
+          ` | Growth: ${summary.plans.Growth}` +
+          ` | Scale: ${summary.plans.Scale}`;
+      } catch (error) {
+        status.textContent =
+          `Falha no resumo global: ${error.message}`;
+      }
     }
 
     async function checkReadiness() {
@@ -1279,6 +1436,7 @@
             loadUsageTrend(),
             loadUsageForecast(),
             evaluateUsageRisk(),
+            loadPlatformSummary(),
         ]);
         return;
     }

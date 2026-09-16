@@ -608,6 +608,75 @@ def get_database_readiness():
         }
 
 
+def get_platform_summary():
+    with connect_database() as connection:
+        totals = connection.execute("""
+            SELECT
+                COUNT(*) AS total_tenants,
+                COALESCE(SUM(used), 0) AS total_used,
+                COALESCE(SUM(usage_limit), 0)
+                    AS total_capacity,
+                COALESCE(SUM(
+                    CASE
+                        WHEN used >= usage_limit
+                        THEN 1
+                        ELSE 0
+                    END
+                ), 0) AS blocked_tenants,
+                COALESCE(SUM(
+                    CASE
+                        WHEN used < usage_limit
+                         AND (
+                            used * 1.0 / usage_limit
+                         ) >= 0.8
+                        THEN 1
+                        ELSE 0
+                    END
+                ), 0) AS warning_tenants
+            FROM usage_counters
+        """).fetchone()
+
+        plan_rows = connection.execute("""
+            SELECT
+                plan,
+                COUNT(*) AS total
+            FROM usage_counters
+            GROUP BY plan
+            ORDER BY plan
+        """).fetchall()
+
+    total_capacity = totals["total_capacity"]
+    total_used = totals["total_used"]
+
+    usage_percentage = (
+        round(
+            (total_used / total_capacity) * 100,
+            1,
+        )
+        if total_capacity > 0
+        else 0.0
+    )
+
+    plans = {
+        "Start": 0,
+        "Growth": 0,
+        "Scale": 0,
+    }
+
+    for row in plan_rows:
+        plans[row["plan"]] = row["total"]
+
+    return {
+        "total_tenants": totals["total_tenants"],
+        "total_used": total_used,
+        "total_capacity": total_capacity,
+        "usage_percentage": usage_percentage,
+        "warning_tenants": totals["warning_tenants"],
+        "blocked_tenants": totals["blocked_tenants"],
+        "plans": plans,
+    }
+
+
 def list_tenants():
     with connect_database() as connection:
         rows = connection.execute("""
@@ -1059,6 +1128,15 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             })
             return
 
+
+        if path == "/api/platform/summary":
+            summary = get_platform_summary()
+
+            self.send_json(200, {
+                "scope": "platform",
+                "summary": summary,
+            })
+            return
 
         if path == "/api/tenants":
             tenants = list_tenants()
