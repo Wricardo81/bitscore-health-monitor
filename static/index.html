@@ -1096,7 +1096,16 @@
       status.textContent = "Verificando...";
 
       try {
-        const response = await fetch("/api/health");
+        const requestId = crypto.randomUUID();
+
+        const response = await fetch(
+          "/api/health",
+          {
+            headers: {
+              "X-Request-ID": requestId
+            }
+          }
+        );
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
@@ -1111,8 +1120,17 @@
         document.querySelector("#uptime").textContent =
           `Uptime: ${data.uptime_seconds} segundos`;
 
+        const propagated = (
+          data.request_id === requestId
+        );
+
         document.querySelector("#requestId").textContent =
-          `Request ID: ${data.request_id}`;
+          `Request ID: ${data.request_id}` +
+          (
+            propagated
+              ? " | propagado pelo frontend"
+              : " | gerado pelo backend"
+          );
       } catch (error) {
         status.textContent = "● Sistema indisponível";
         document.querySelector("#service").textContent = error.message;

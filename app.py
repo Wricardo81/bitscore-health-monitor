@@ -1309,8 +1309,19 @@ class SaaSHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory="static", **kwargs)
 
+    def get_request_id(self):
+        candidate = self.headers.get(
+            "X-Request-ID",
+            "",
+        ).strip()
+
+        try:
+            return str(uuid.UUID(candidate))
+        except (ValueError, AttributeError):
+            return str(uuid.uuid4())
+
     def send_json(self, status_code, data):
-        request_id = str(uuid.uuid4())
+        request_id = self.get_request_id()
         response = {**data, "request_id": request_id}
         body = json.dumps(response).encode("utf-8")
 
@@ -1330,7 +1341,7 @@ class SaaSHandler(SimpleHTTPRequestHandler):
         content,
         content_type="text/plain; charset=utf-8",
     ):
-        request_id = str(uuid.uuid4())
+        request_id = self.get_request_id()
         body = content.encode("utf-8")
 
         self.send_response(status_code)
