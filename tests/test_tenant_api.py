@@ -1907,5 +1907,75 @@ class TenantApiTests(unittest.TestCase):
                 self.assertIn(marker, dashboard)
 
 
+    def test_valid_request_id_is_propagated(self):
+        request_id = str(uuid.uuid4())
+
+        status, body, headers = self.request(
+            "/api/health",
+            headers={
+                "X-Request-ID": request_id,
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body["request_id"],
+            request_id,
+        )
+        self.assertEqual(
+            headers["X-Request-ID"],
+            request_id,
+        )
+
+    def test_invalid_request_id_is_replaced(self):
+        malicious_value = "<script>alert(1)</script>"
+
+        status, body, headers = self.request(
+            "/api/health",
+            headers={
+                "X-Request-ID": malicious_value,
+            },
+        )
+
+        generated = body["request_id"]
+
+        self.assertEqual(status, 200)
+        self.assertNotEqual(
+            generated,
+            malicious_value,
+        )
+        self.assertEqual(
+            headers["X-Request-ID"],
+            generated,
+        )
+
+        parsed = uuid.UUID(generated)
+
+        self.assertEqual(
+            str(parsed),
+            generated,
+        )
+
+    def test_dashboard_initiates_request_tracing(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "crypto.randomUUID()",
+            dashboard,
+        )
+        self.assertIn(
+            '"X-Request-ID": requestId',
+            dashboard,
+        )
+        self.assertIn(
+            "propagado pelo frontend",
+            dashboard,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
