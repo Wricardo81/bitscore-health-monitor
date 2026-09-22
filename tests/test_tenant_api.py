@@ -1810,5 +1810,102 @@ class TenantApiTests(unittest.TestCase):
         self.assertEqual(body["notifications"], [])
 
 
+    def test_metrics_exposes_prometheus_format(self):
+        status, content, headers = self.request_text(
+            "/metrics"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn(
+            "text/plain",
+            headers["Content-Type"],
+        )
+        self.assertIn(
+            "version=0.0.4",
+            headers["Content-Type"],
+        )
+        self.assertIn(
+            "X-Request-ID",
+            headers,
+        )
+        self.assertIn(
+            "# TYPE bitscore_tenants_total gauge",
+            content,
+        )
+        self.assertIn(
+            "bitscore_usage_events_total",
+            content,
+        )
+        self.assertIn(
+            'bitscore_notifications_total{status="pending"}',
+            content,
+        )
+
+    def test_metrics_reflects_activity_without_tenant_ids(self):
+        def metric_value(content, metric):
+            line = next(
+                item
+                for item in content.splitlines()
+                if item.startswith(f"{metric} ")
+            )
+
+            return float(line.split()[-1])
+
+        _, before, _ = self.request_text("/metrics")
+
+        tenant_id = "tenant-metrics-private"
+        self.create_tenant(tenant_id)
+
+        self.consume(
+            (
+                "/api/usage/consume"
+                f"?tenant_id={tenant_id}"
+            )
+        )
+
+        _, after, _ = self.request_text("/metrics")
+
+        self.assertEqual(
+            metric_value(
+                after,
+                "bitscore_tenants_total",
+            ),
+            metric_value(
+                before,
+                "bitscore_tenants_total",
+            ) + 1,
+        )
+        self.assertEqual(
+            metric_value(
+                after,
+                "bitscore_usage_events_total",
+            ),
+            metric_value(
+                before,
+                "bitscore_usage_events_total",
+            ) + 1,
+        )
+        self.assertNotIn(tenant_id, after)
+
+    def test_dashboard_has_operational_metrics_panel(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            'id="metricsTenantTotal"',
+            'id="metricsEventTotal"',
+            'id="metricsPendingTotal"',
+            "async function loadOperationalMetrics()",
+            'fetch("/metrics")',
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()

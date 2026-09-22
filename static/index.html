@@ -488,6 +488,59 @@
       }
     }
 
+
+    .operational-metrics {
+      margin: 18px 0;
+      padding: 16px;
+      border: 1px solid #233554;
+      border-radius: 14px;
+      background: rgba(13, 31, 56, 0.72);
+    }
+
+    .operational-metrics h2 {
+      margin: 0 0 12px;
+    }
+
+    .operational-metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(
+        3,
+        minmax(0, 1fr)
+      );
+      gap: 10px;
+    }
+
+    .operational-metric {
+      min-width: 0;
+      padding: 12px;
+      border-radius: 10px;
+      background: #0d1f38;
+    }
+
+    .operational-metric span {
+      display: block;
+      margin-bottom: 5px;
+      color: #a8b2d1;
+      font-size: 0.74rem;
+    }
+
+    .operational-metric strong {
+      color: #64ffda;
+      font-size: 1.3rem;
+    }
+
+    #operationalMetricsStatus {
+      margin: 12px 0 0;
+      color: #8892b0;
+      font-size: 0.8rem;
+    }
+
+    @media (max-width: 520px) {
+      .operational-metrics-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -568,6 +621,37 @@
             aria-live="polite"
         >
             Carregando resumo global...
+        </p>
+    </section>
+
+    <section
+        class="operational-metrics"
+        aria-label="Metricas operacionais"
+    >
+        <h2>Metricas operacionais</h2>
+
+        <div class="operational-metrics-grid">
+            <article class="operational-metric">
+                <span>Tenants monitorados</span>
+                <strong id="metricsTenantTotal">0</strong>
+            </article>
+
+            <article class="operational-metric">
+                <span>Eventos processados</span>
+                <strong id="metricsEventTotal">0</strong>
+            </article>
+
+            <article class="operational-metric">
+                <span>Notificacoes pendentes</span>
+                <strong id="metricsPendingTotal">0</strong>
+            </article>
+        </div>
+
+        <p
+            id="operationalMetricsStatus"
+            aria-live="polite"
+        >
+            Carregando metricas...
         </p>
     </section>
 
@@ -894,6 +978,85 @@
       }
     }
 
+    async function loadOperationalMetrics() {
+      const status = document.querySelector(
+        "#operationalMetricsStatus"
+      );
+
+      try {
+        const response = await fetch("/metrics");
+        const content = await response.text();
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        function metricValue(name, labels = "") {
+          const prefix = labels
+            ? `${name}{${labels}}`
+            : name;
+
+          const line = content
+            .split("\n")
+            .find(item => (
+              item.startsWith(`${prefix} `)
+            ));
+
+          return line
+            ? Number(line.trim().split(/\s+/)[1])
+            : 0;
+        }
+
+        const tenants = metricValue(
+          "bitscore_tenants_total"
+        );
+
+        const usageEvents = metricValue(
+          "bitscore_usage_events_total"
+        );
+
+        const subscriptionEvents = metricValue(
+          "bitscore_subscription_events_total"
+        );
+
+        const riskAlerts = metricValue(
+          "bitscore_risk_alerts_total"
+        );
+
+        const pending = metricValue(
+          "bitscore_notifications_total",
+          'status="pending"'
+        );
+
+        const uptime = metricValue(
+          "bitscore_process_uptime_seconds"
+        );
+
+        document.querySelector(
+          "#metricsTenantTotal"
+        ).textContent = tenants;
+
+        document.querySelector(
+          "#metricsEventTotal"
+        ).textContent = (
+          usageEvents
+          + subscriptionEvents
+          + riskAlerts
+        );
+
+        document.querySelector(
+          "#metricsPendingTotal"
+        ).textContent = pending;
+
+        status.textContent =
+          `Endpoint /metrics ativo` +
+          ` | Uptime: ${uptime}s`;
+      } catch (error) {
+        status.textContent =
+          `Falha nas metricas: ${error.message}`;
+      }
+    }
+
     async function checkReadiness() {
       const readiness = document.querySelector(
         "#readiness"
@@ -962,6 +1125,7 @@
         await Promise.all([
           checkHealth(),
           checkReadiness(),
+          loadOperationalMetrics(),
         ]);
       });
 
@@ -1645,6 +1809,7 @@
         await Promise.all([
           checkHealth(),
           checkReadiness(),
+          loadOperationalMetrics(),
         ]);
 
         await loadTenantDirectory();
