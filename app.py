@@ -741,6 +741,113 @@ def dispatch_next_notification(tenant_id):
     return serialize_notification(delivered)
 
 
+
+def get_operational_metrics():
+    with connect_database() as connection:
+        totals = connection.execute("""
+            SELECT
+                (SELECT COUNT(*) FROM usage_counters)
+                    AS tenants_total,
+                (SELECT COUNT(*) FROM usage_events)
+                    AS usage_events_total,
+                (SELECT COUNT(*) FROM subscription_events)
+                    AS subscription_events_total,
+                (SELECT COUNT(*) FROM usage_risk_alerts)
+                    AS risk_alerts_total
+        """).fetchone()
+
+        notification_rows = connection.execute("""
+            SELECT
+                status,
+                COUNT(*) AS total
+            FROM notification_outbox
+            GROUP BY status
+        """).fetchall()
+
+    notifications = {
+        "pending": 0,
+        "delivered": 0,
+        "failed": 0,
+    }
+
+    for row in notification_rows:
+        notifications[row["status"]] = row["total"]
+
+    return {
+        "uptime_seconds": round(
+            time.time() - START_TIME,
+            2,
+        ),
+        "tenants_total": totals["tenants_total"],
+        "usage_events_total": (
+            totals["usage_events_total"]
+        ),
+        "subscription_events_total": (
+            totals["subscription_events_total"]
+        ),
+        "risk_alerts_total": (
+            totals["risk_alerts_total"]
+        ),
+        "notifications": notifications,
+    }
+
+
+def render_prometheus_metrics(metrics):
+    lines = [
+        "# HELP bitscore_process_uptime_seconds "
+        "Tempo de execucao do processo.",
+        "# TYPE bitscore_process_uptime_seconds gauge",
+        (
+            "bitscore_process_uptime_seconds "
+            f"{metrics['uptime_seconds']}"
+        ),
+        "# HELP bitscore_tenants_total "
+        "Quantidade de tenants cadastrados.",
+        "# TYPE bitscore_tenants_total gauge",
+        (
+            "bitscore_tenants_total "
+            f"{metrics['tenants_total']}"
+        ),
+        "# HELP bitscore_usage_events_total "
+        "Eventos validos de consumo.",
+        "# TYPE bitscore_usage_events_total counter",
+        (
+            "bitscore_usage_events_total "
+            f"{metrics['usage_events_total']}"
+        ),
+        "# HELP bitscore_subscription_events_total "
+        "Eventos de assinatura.",
+        "# TYPE bitscore_subscription_events_total counter",
+        (
+            "bitscore_subscription_events_total "
+            f"{metrics['subscription_events_total']}"
+        ),
+        "# HELP bitscore_risk_alerts_total "
+        "Transicoes de risco registradas.",
+        "# TYPE bitscore_risk_alerts_total counter",
+        (
+            "bitscore_risk_alerts_total "
+            f"{metrics['risk_alerts_total']}"
+        ),
+        "# HELP bitscore_notifications_total "
+        "Notificacoes por estado.",
+        "# TYPE bitscore_notifications_total gauge",
+    ]
+
+    for status in [
+        "pending",
+        "delivered",
+        "failed",
+    ]:
+        lines.append(
+            "bitscore_notifications_total"
+            f'{{status="{status}"}} '
+            f"{metrics['notifications'].get(status, 0)}"
+        )
+
+    return "\n".join(lines) + "\n"
+
+
 def get_database_readiness():
     started_at = time.perf_counter()
 
@@ -1217,6 +1324,31 @@ class SaaSHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_text(
+        self,
+        status_code,
+        content,
+        content_type="text/plain; charset=utf-8",
+    ):
+        request_id = str(uuid.uuid4())
+        body = content.encode("utf-8")
+
+        self.send_response(status_code)
+        self.send_header(
+            "Content-Type",
+            content_type,
+        )
+        self.send_header(
+            "Content-Length",
+            str(len(body)),
+        )
+        self.send_header(
+            "X-Request-ID",
+            request_id,
+        )
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_csv(self, filename, content):
         request_id = str(uuid.uuid4())
         body = content.encode("utf-8-sig")
@@ -1271,6 +1403,20 @@ class SaaSHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path, tenant_id = self.request_data()
+
+        if path == "/metrics":
+            metrics = get_operational_metrics()
+            content = render_prometheus_metrics(metrics)
+
+            self.send_text(
+                200,
+                content,
+                (
+                    "text/plain; version=0.0.4; "
+                    "charset=utf-8"
+                ),
+            )
+            return
 
         if path == "/api/ready":
             readiness = get_database_readiness()
