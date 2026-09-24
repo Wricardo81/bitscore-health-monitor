@@ -541,6 +541,16 @@
       }
     }
 
+
+    #latency {
+      color: #64ffda;
+      font-size: 0.86rem;
+    }
+
+    #latency[data-level="slow"] {
+      color: #ffd166;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -554,6 +564,14 @@
     <p id="service"></p>
     <p id="uptime"></p>
     <p id="requestId"></p>
+
+    <p
+        id="latency"
+        data-level="checking"
+        aria-live="polite"
+    >
+        Medindo latencia...
+    </p>
 
     <p
         id="readiness"
@@ -1097,6 +1115,7 @@
 
       try {
         const requestId = crypto.randomUUID();
+        const roundTripStartedAt = performance.now();
 
         const response = await fetch(
           "/api/health",
@@ -1106,6 +1125,22 @@
             }
           }
         );
+
+        const roundTripMs = (
+          performance.now() - roundTripStartedAt
+        );
+
+        const serverTiming = (
+          response.headers.get("Server-Timing") || ""
+        );
+
+        const backendMatch = serverTiming.match(
+          /app;dur=([\d.]+)/
+        );
+
+        const backendMs = backendMatch
+          ? Number(backendMatch[1])
+          : null;
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
@@ -1131,6 +1166,24 @@
               ? " | propagado pelo frontend"
               : " | gerado pelo backend"
           );
+
+        const latency = document.querySelector(
+          "#latency"
+        );
+
+        latency.dataset.level = (
+          roundTripMs > 500 ? "slow" : "normal"
+        );
+
+        latency.textContent = backendMs === null
+          ? (
+              "Latencia total: " +
+              `${roundTripMs.toFixed(2)} ms`
+            )
+          : (
+              `Backend: ${backendMs.toFixed(2)} ms` +
+              ` | Total: ${roundTripMs.toFixed(2)} ms`
+            );
       } catch (error) {
         status.textContent = "● Sistema indisponível";
         document.querySelector("#service").textContent = error.message;
