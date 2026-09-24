@@ -1307,7 +1307,26 @@ def create_tenant(tenant_id, plan, usage_limit):
 
 class SaaSHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
+        self.request_started_at = time.perf_counter()
         super().__init__(*args, directory="static", **kwargs)
+
+    def get_server_timing(self):
+        duration_ms = (
+            time.perf_counter()
+            - self.request_started_at
+        ) * 1000
+
+        return f"app;dur={duration_ms:.2f}"
+
+    def send_observability_headers(self, request_id):
+        self.send_header(
+            "X-Request-ID",
+            request_id,
+        )
+        self.send_header(
+            "Server-Timing",
+            self.get_server_timing(),
+        )
 
     def get_request_id(self):
         candidate = self.headers.get(
@@ -1331,7 +1350,9 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             "application/json; charset=utf-8",
         )
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("X-Request-ID", request_id)
+        self.send_observability_headers(
+            request_id
+        )
         self.end_headers()
         self.wfile.write(body)
 
@@ -1353,15 +1374,14 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             "Content-Length",
             str(len(body)),
         )
-        self.send_header(
-            "X-Request-ID",
-            request_id,
+        self.send_observability_headers(
+            request_id
         )
         self.end_headers()
         self.wfile.write(body)
 
     def send_csv(self, filename, content):
-        request_id = str(uuid.uuid4())
+        request_id = self.get_request_id()
         body = content.encode("utf-8-sig")
 
         self.send_response(200)
@@ -1377,9 +1397,8 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             "Content-Length",
             str(len(body)),
         )
-        self.send_header(
-            "X-Request-ID",
-            request_id,
+        self.send_observability_headers(
+            request_id
         )
         self.end_headers()
         self.wfile.write(body)

@@ -1977,5 +1977,57 @@ class TenantApiTests(unittest.TestCase):
         )
 
 
+    def test_health_exposes_server_timing(self):
+        status, _, headers = self.request(
+            "/api/health"
+        )
+
+        server_timing = headers["Server-Timing"]
+
+        self.assertEqual(status, 200)
+        self.assertRegex(
+            server_timing,
+            r"^app;dur=\d+(\.\d+)?$",
+        )
+
+        duration_ms = float(
+            server_timing.split("=", 1)[1]
+        )
+
+        self.assertGreaterEqual(duration_ms, 0)
+
+    def test_metrics_exposes_server_timing(self):
+        status, _, headers = self.request_text(
+            "/metrics"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn("Server-Timing", headers)
+        self.assertTrue(
+            headers["Server-Timing"].startswith(
+                "app;dur="
+            )
+        )
+
+    def test_dashboard_displays_backend_and_total_latency(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            'id="latency"',
+            "performance.now()",
+            'response.headers.get("Server-Timing")',
+            "Backend:",
+            "roundTripMs.toFixed(2)",
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()
