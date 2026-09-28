@@ -17,6 +17,51 @@ DATABASE = os.getenv(
 HOST = os.getenv("BITSCORE_HOST", "127.0.0.1")
 PORT = int(os.getenv("BITSCORE_PORT", "8010"))
 START_TIME = time.time()
+PLATFORM_VERSION = "1.4.0"
+API_VERSION = "v1"
+
+PLATFORM_CAPABILITIES = [
+    {
+        "key": "tenant_isolation",
+        "status": "stable",
+        "description": "Dados isolados por empresa.",
+    },
+    {
+        "key": "subscription_usage",
+        "status": "stable",
+        "description": "Medicao de uso e limites por plano.",
+    },
+    {
+        "key": "usage_forecast",
+        "status": "stable",
+        "description": "Previsao de esgotamento do plano.",
+    },
+    {
+        "key": "risk_alerts",
+        "status": "stable",
+        "description": "Transicoes persistentes de risco.",
+    },
+    {
+        "key": "notification_outbox",
+        "status": "stable",
+        "description": "Fila transacional de notificacoes.",
+    },
+    {
+        "key": "prometheus_metrics",
+        "status": "stable",
+        "description": "Metricas operacionais Prometheus.",
+    },
+    {
+        "key": "request_tracing",
+        "status": "stable",
+        "description": "Propagacao de Request ID.",
+    },
+    {
+        "key": "server_timing",
+        "status": "stable",
+        "description": "Latencia do backend via HTTP.",
+    },
+]
 
 
 PLAN_LIMITS = {
@@ -24,6 +69,18 @@ PLAN_LIMITS = {
     "Growth": 500,
     "Scale": 2000,
 }
+
+
+def get_platform_capabilities():
+    return {
+        "platform_version": PLATFORM_VERSION,
+        "api_version": API_VERSION,
+        "capabilities": [
+            dict(capability)
+            for capability in PLATFORM_CAPABILITIES
+        ],
+        "total": len(PLATFORM_CAPABILITIES),
+    }
 
 
 def connect_database():
@@ -1327,6 +1384,10 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             "Server-Timing",
             self.get_server_timing(),
         )
+        self.send_header(
+            "X-BitsCore-Version",
+            PLATFORM_VERSION,
+        )
 
     def get_request_id(self):
         candidate = self.headers.get(
@@ -1468,7 +1529,7 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             self.send_json(200, {
                 "status": "online",
                 "service": "BitsCore API",
-                "version": "1.3.0",
+                "version": PLATFORM_VERSION,
                 "uptime_seconds": round(
                     time.time() - START_TIME,
                     2,
@@ -1476,6 +1537,15 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             })
             return
 
+
+        if path == "/api/platform/capabilities":
+            capabilities = get_platform_capabilities()
+
+            self.send_json(200, {
+                "scope": "platform",
+                **capabilities,
+            })
+            return
 
         if path == "/api/platform/summary":
             summary = get_platform_summary()
