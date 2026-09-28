@@ -551,6 +551,40 @@
       color: #ffd166;
     }
 
+
+    .platform-capabilities {
+      margin: 18px 0;
+      padding: 16px;
+      border: 1px solid #233554;
+      border-radius: 14px;
+      background: rgba(13, 31, 56, 0.72);
+    }
+
+    .platform-capabilities h2 {
+      margin: 0 0 12px;
+    }
+
+    .capability-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .capability-badge {
+      padding: 7px 10px;
+      border: 1px solid rgba(100, 255, 218, 0.35);
+      border-radius: 999px;
+      color: #64ffda;
+      background: rgba(100, 255, 218, 0.06);
+      font-size: 0.76rem;
+    }
+
+    #platformCapabilitiesStatus {
+      margin: 12px 0 0;
+      color: #8892b0;
+      font-size: 0.8rem;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -595,6 +629,25 @@
             </option>
         </select>
     </div>
+
+    <section
+        class="platform-capabilities"
+        aria-label="Capacidades da plataforma"
+    >
+        <h2>Capacidades da BitsCore</h2>
+
+        <div
+            id="platformCapabilityList"
+            class="capability-list"
+        ></div>
+
+        <p
+            id="platformCapabilitiesStatus"
+            aria-live="polite"
+        >
+            Consultando contrato da plataforma...
+        </p>
+    </section>
 
     <section
         class="platform-overview"
@@ -947,6 +1000,56 @@
       ]);
     }
 
+    async function loadPlatformCapabilities() {
+      const list = document.querySelector(
+        "#platformCapabilityList"
+      );
+      const status = document.querySelector(
+        "#platformCapabilitiesStatus"
+      );
+
+      try {
+        const response = await fetch(
+          "/api/platform/capabilities"
+        );
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || `HTTP ${response.status}`
+          );
+        }
+
+        list.replaceChildren();
+
+        for (const capability of data.capabilities) {
+          const badge = document.createElement("span");
+          badge.className = "capability-badge";
+          badge.textContent =
+            `${capability.key} - ${capability.status}`;
+          badge.title = capability.description;
+          list.appendChild(badge);
+        }
+
+        const headerVersion = response.headers.get(
+          "X-BitsCore-Version"
+        );
+
+        status.textContent =
+          `Plataforma ${data.platform_version}` +
+          ` | API ${data.api_version}` +
+          ` | ${data.total} capacidades` +
+          (
+            headerVersion === data.platform_version
+              ? " | contrato verificado"
+              : " | versao divergente"
+          );
+      } catch (error) {
+        status.textContent =
+          `Falha no contrato: ${error.message}`;
+      }
+    }
+
     async function loadPlatformSummary() {
       const status = document.querySelector(
         "#platformSummaryStatus"
@@ -1197,6 +1300,7 @@
           checkHealth(),
           checkReadiness(),
           loadOperationalMetrics(),
+          loadPlatformCapabilities(),
         ]);
       });
 
@@ -1881,6 +1985,7 @@
           checkHealth(),
           checkReadiness(),
           loadOperationalMetrics(),
+          loadPlatformCapabilities(),
         ]);
 
         await loadTenantDirectory();

@@ -2029,5 +2029,89 @@ class TenantApiTests(unittest.TestCase):
                 self.assertIn(marker, dashboard)
 
 
+    def test_platform_capabilities_exposes_stable_contract(self):
+        status, body, headers = self.request(
+            "/api/platform/capabilities"
+        )
+
+        keys = {
+            capability["key"]
+            for capability in body["capabilities"]
+        }
+
+        expected = {
+            "tenant_isolation",
+            "subscription_usage",
+            "notification_outbox",
+            "prometheus_metrics",
+            "request_tracing",
+            "server_timing",
+        }
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["scope"], "platform")
+        self.assertEqual(body["api_version"], "v1")
+        self.assertTrue(expected.issubset(keys))
+        self.assertEqual(
+            body["total"],
+            len(body["capabilities"]),
+        )
+        self.assertEqual(
+            headers["X-BitsCore-Version"],
+            body["platform_version"],
+        )
+
+    def test_version_header_exists_on_json_and_metrics(self):
+        _, health, health_headers = self.request(
+            "/api/health"
+        )
+        _, _, metrics_headers = self.request_text(
+            "/metrics"
+        )
+
+        self.assertEqual(
+            health_headers["X-BitsCore-Version"],
+            health["version"],
+        )
+        self.assertEqual(
+            metrics_headers["X-BitsCore-Version"],
+            health["version"],
+        )
+
+    def test_health_and_capabilities_share_version(self):
+        _, health, _ = self.request("/api/health")
+        _, capabilities, _ = self.request(
+            "/api/platform/capabilities"
+        )
+
+        self.assertEqual(
+            health["version"],
+            capabilities["platform_version"],
+        )
+        self.assertEqual(
+            health["version"],
+            "1.4.0",
+        )
+
+    def test_dashboard_has_platform_capabilities_panel(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            'id="platformCapabilityList"',
+            'id="platformCapabilitiesStatus"',
+            "async function loadPlatformCapabilities()",
+            '"/api/platform/capabilities"',
+            '"X-BitsCore-Version"',
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()
