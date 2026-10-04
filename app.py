@@ -71,6 +71,63 @@ PLAN_LIMITS = {
 }
 
 
+
+PLAN_ENTITLEMENTS = {
+    "Start": {
+        "tenant_isolation",
+        "subscription_usage",
+    },
+    "Growth": {
+        "tenant_isolation",
+        "subscription_usage",
+        "usage_forecast",
+        "risk_alerts",
+        "notification_outbox",
+    },
+    "Scale": {
+        capability["key"]
+        for capability in PLATFORM_CAPABILITIES
+    },
+}
+
+
+def get_tenant_entitlements(tenant_id):
+    usage = get_usage(tenant_id)
+
+    if usage is None:
+        return None
+
+    enabled_keys = PLAN_ENTITLEMENTS.get(
+        usage["plan"],
+        set(),
+    )
+
+    capability_keys = [
+        capability["key"]
+        for capability in PLATFORM_CAPABILITIES
+    ]
+
+    enabled = [
+        key
+        for key in capability_keys
+        if key in enabled_keys
+    ]
+
+    disabled = [
+        key
+        for key in capability_keys
+        if key not in enabled_keys
+    ]
+
+    return {
+        "tenant_id": tenant_id,
+        "plan": usage["plan"],
+        "platform_version": PLATFORM_VERSION,
+        "enabled": enabled,
+        "disabled": disabled,
+    }
+
+
 def get_platform_capabilities():
     return {
         "platform_version": PLATFORM_VERSION,
@@ -1632,6 +1689,23 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             self.send_json(200, {
                 "scope": "platform",
                 **compatibility,
+            })
+            return
+
+        if path == "/api/tenant/entitlements":
+            entitlements = get_tenant_entitlements(
+                tenant_id
+            )
+
+            if entitlements is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            self.send_json(200, {
+                "scope": "tenant",
+                **entitlements,
             })
             return
 

@@ -654,6 +654,37 @@
       font-size: 0.82rem;
     }
 
+
+    .tenant-entitlements {
+      margin: 18px 0;
+      padding: 16px;
+      border: 1px solid #233554;
+      border-radius: 14px;
+      background: rgba(13, 31, 56, 0.72);
+    }
+
+    .tenant-entitlements-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .tenant-entitlements h2 {
+      margin: 0;
+    }
+
+    #tenantEntitlementStatus {
+      margin: 12px 0 0;
+      color: #8892b0;
+      font-size: 0.84rem;
+      line-height: 1.5;
+    }
+
+    #tenantEntitlementStatus[data-loaded="true"] {
+      color: #64ffda;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -698,6 +729,30 @@
             </option>
         </select>
     </div>
+
+    <section
+        class="tenant-entitlements"
+        aria-label="Recursos liberados pelo plano"
+    >
+        <div class="tenant-entitlements-header">
+            <h2>Recursos do plano</h2>
+
+            <button
+                id="refreshEntitlements"
+                type="button"
+            >
+                Consultar plano
+            </button>
+        </div>
+
+        <p
+            id="tenantEntitlementStatus"
+            data-loaded="false"
+            aria-live="polite"
+        >
+            Consulte os recursos liberados para a empresa.
+        </p>
+    </section>
 
     <section
         class="platform-capabilities"
@@ -1164,6 +1219,47 @@
         badge.textContent = "ERRO";
         status.textContent =
           `Falha na compatibilidade: ${error.message}`;
+      }
+    }
+
+    async function loadTenantEntitlements() {
+      const status = document.querySelector(
+        "#tenantEntitlementStatus"
+      );
+      const button = document.querySelector(
+        "#refreshEntitlements"
+      );
+
+      button.disabled = true;
+      status.dataset.loaded = "false";
+      status.textContent =
+        "Consultando recursos do plano...";
+
+      try {
+        const response = await fetch(
+          tenantApiUrl("/api/tenant/entitlements")
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || `HTTP ${response.status}`
+          );
+        }
+
+        const enabled = data.enabled.length
+          ? data.enabled.join(", ")
+          : "nenhum recurso";
+
+        status.dataset.loaded = "true";
+        status.textContent =
+          `Plano ${data.plan}: ${enabled}.`;
+      } catch (error) {
+        status.textContent =
+          `Falha ao consultar plano: ${error.message}`;
+      } finally {
+        button.disabled = false;
       }
     }
 
@@ -2166,6 +2262,13 @@
           `Falha ao iniciar dashboard: ${error.message}`;
       }
     }
+
+    document
+      .querySelector("#refreshEntitlements")
+      .addEventListener(
+        "click",
+        loadTenantEntitlements
+      );
 
     initializeDashboard();
   </script>
