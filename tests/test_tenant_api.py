@@ -2195,5 +2195,121 @@ class TenantApiTests(unittest.TestCase):
                 self.assertIn(marker, dashboard)
 
 
+    def test_start_plan_has_basic_entitlements(self):
+        tenant_id = "tenant-entitlement-start"
+        self.create_tenant(
+            tenant_id,
+            plan="Start",
+            limit=100,
+        )
+
+        status, body, headers = self.request(
+            (
+                "/api/tenant/entitlements"
+                f"?tenant_id={tenant_id}"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["plan"], "Start")
+        self.assertIn(
+            "subscription_usage",
+            body["enabled"],
+        )
+        self.assertNotIn(
+            "notification_outbox",
+            body["enabled"],
+        )
+        self.assertEqual(
+            headers["X-BitsCore-Version"],
+            body["platform_version"],
+        )
+
+    def test_growth_plan_enables_automation_features(self):
+        tenant_id = "tenant-entitlement-growth"
+        self.create_tenant(
+            tenant_id,
+            plan="Growth",
+            limit=500,
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/tenant/entitlements"
+                f"?tenant_id={tenant_id}"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertIn(
+            "usage_forecast",
+            body["enabled"],
+        )
+        self.assertIn(
+            "risk_alerts",
+            body["enabled"],
+        )
+        self.assertIn(
+            "notification_outbox",
+            body["enabled"],
+        )
+        self.assertIn(
+            "prometheus_metrics",
+            body["disabled"],
+        )
+
+    def test_entitlements_remain_tenant_isolated(self):
+        self.create_tenant(
+            "tenant-entitlement-alpha",
+            plan="Start",
+            limit=100,
+        )
+        self.create_tenant(
+            "tenant-entitlement-beta",
+            plan="Scale",
+            limit=1000,
+        )
+
+        _, alpha, _ = self.request(
+            (
+                "/api/tenant/entitlements"
+                "?tenant_id=tenant-entitlement-alpha"
+            )
+        )
+        _, beta, _ = self.request(
+            (
+                "/api/tenant/entitlements"
+                "?tenant_id=tenant-entitlement-beta"
+            )
+        )
+
+        self.assertNotIn(
+            "server_timing",
+            alpha["enabled"],
+        )
+        self.assertIn(
+            "server_timing",
+            beta["enabled"],
+        )
+
+    def test_dashboard_has_entitlement_panel(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            'id="tenantEntitlementStatus"',
+            'id="refreshEntitlements"',
+            "async function loadTenantEntitlements()",
+            "/api/tenant/entitlements",
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()
