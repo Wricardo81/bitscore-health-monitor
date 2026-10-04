@@ -83,6 +83,47 @@ def get_platform_capabilities():
     }
 
 
+def assess_product_compatibility(
+    product_key,
+    required_capabilities,
+):
+    capabilities = {
+        capability["key"]: capability["status"]
+        for capability in PLATFORM_CAPABILITIES
+    }
+
+    required = []
+    seen = set()
+
+    for raw_key in required_capabilities:
+        key = raw_key.strip().lower()
+
+        if key and key not in seen:
+            required.append(key)
+            seen.add(key)
+
+    available = [
+        key
+        for key in required
+        if capabilities.get(key) == "stable"
+    ]
+
+    missing = [
+        key
+        for key in required
+        if capabilities.get(key) != "stable"
+    ]
+
+    return {
+        "product_key": product_key,
+        "platform_version": PLATFORM_VERSION,
+        "compatible": len(missing) == 0,
+        "required": required,
+        "available": available,
+        "missing": missing,
+    }
+
+
 def connect_database():
     connection = sqlite3.connect(DATABASE)
     connection.row_factory = sqlite3.Row
@@ -1537,6 +1578,62 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             })
             return
 
+
+        if path == "/api/platform/compatibility":
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            product_key = str(
+                query.get("product", [""])[0]
+            ).strip().lower()
+
+            raw_required = str(
+                query.get("required", [""])[0]
+            )
+
+            normalized_product = (
+                product_key
+                .replace("-", "")
+                .replace("_", "")
+            )
+
+            if (
+                not product_key
+                or not normalized_product.isalnum()
+            ):
+                self.send_json(400, {
+                    "error": "product invalido",
+                })
+                return
+
+            required = [
+                key.strip()
+                for key in raw_required.split(",")
+                if key.strip()
+            ]
+
+            if not required or len(required) > 12:
+                self.send_json(400, {
+                    "error": (
+                        "required deve conter entre "
+                        "1 e 12 capacidades"
+                    ),
+                })
+                return
+
+            compatibility = (
+                assess_product_compatibility(
+                    product_key,
+                    required,
+                )
+            )
+
+            self.send_json(200, {
+                "scope": "platform",
+                **compatibility,
+            })
+            return
 
         if path == "/api/platform/capabilities":
             capabilities = get_platform_capabilities()

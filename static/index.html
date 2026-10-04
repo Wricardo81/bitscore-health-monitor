@@ -585,6 +585,75 @@
       font-size: 0.8rem;
     }
 
+
+    .product-compatibility {
+      margin: 18px 0;
+      padding: 16px;
+      border: 1px solid #233554;
+      border-radius: 14px;
+      background: rgba(13, 31, 56, 0.72);
+    }
+
+    .product-compatibility-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .product-compatibility-header h2 {
+      margin: 0;
+    }
+
+    #productCompatibilityBadge {
+      padding: 5px 9px;
+      border: 1px solid #ffd166;
+      border-radius: 999px;
+      color: #ffd166;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+
+    #productCompatibilityBadge[data-compatible="true"] {
+      border-color: #64ffda;
+      color: #64ffda;
+    }
+
+    #productCompatibilityBadge[data-compatible="false"] {
+      border-color: #ff6b6b;
+      color: #ff6b6b;
+    }
+
+    #productCompatibilityList {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    #productCompatibilityList li {
+      padding: 9px 11px;
+      border-radius: 9px;
+      color: #a8b2d1;
+      background: #0d1f38;
+    }
+
+    #productCompatibilityList li[data-available="true"] {
+      color: #64ffda;
+    }
+
+    #productCompatibilityList li[data-available="false"] {
+      color: #ff6b6b;
+    }
+
+    #productCompatibilityStatus {
+      margin: 12px 0 0;
+      color: #8892b0;
+      font-size: 0.82rem;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -723,6 +792,31 @@
             aria-live="polite"
         >
             Carregando metricas...
+        </p>
+    </section>
+
+    <section
+        class="product-compatibility"
+        aria-label="Compatibilidade do BitsAgenda"
+    >
+        <div class="product-compatibility-header">
+            <h2>Integracao do BitsAgenda</h2>
+
+            <span
+                id="productCompatibilityBadge"
+                data-compatible="checking"
+            >
+                VERIFICANDO
+            </span>
+        </div>
+
+        <ul id="productCompatibilityList"></ul>
+
+        <p
+            id="productCompatibilityStatus"
+            aria-live="polite"
+        >
+            Verificando contrato da plataforma...
         </p>
     </section>
 
@@ -998,6 +1092,79 @@
         loadPlatformSummary(),
         loadNotificationOutbox(),
       ]);
+    }
+
+    async function loadProductCompatibility() {
+      const badge = document.querySelector(
+        "#productCompatibilityBadge"
+      );
+      const list = document.querySelector(
+        "#productCompatibilityList"
+      );
+      const status = document.querySelector(
+        "#productCompatibilityStatus"
+      );
+
+      const required = [
+        "tenant_isolation",
+        "subscription_usage",
+        "notification_outbox",
+        "request_tracing",
+      ];
+
+      badge.dataset.compatible = "checking";
+      badge.textContent = "VERIFICANDO";
+
+      try {
+        const parameters = new URLSearchParams({
+          product: "bitsagenda",
+          required: required.join(","),
+        });
+
+        const response = await fetch(
+          `/api/platform/compatibility?${parameters}`
+        );
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || `HTTP ${response.status}`
+          );
+        }
+
+        badge.dataset.compatible = String(
+          data.compatible
+        );
+        badge.textContent = data.compatible
+          ? "COMPATIVEL"
+          : "INCOMPATIVEL";
+
+        list.replaceChildren();
+
+        for (const capability of data.required) {
+          const available = data.available.includes(
+            capability
+          );
+          const item = document.createElement("li");
+
+          item.dataset.available = String(available);
+          item.textContent =
+            `${available ? "OK" : "PENDENTE"} | ` +
+            capability;
+
+          list.appendChild(item);
+        }
+
+        status.textContent =
+          `BitsAgenda x BitsCore ${data.platform_version}` +
+          ` | ${data.available.length}` +
+          ` de ${data.required.length} capacidades disponiveis.`;
+      } catch (error) {
+        badge.dataset.compatible = "false";
+        badge.textContent = "ERRO";
+        status.textContent =
+          `Falha na compatibilidade: ${error.message}`;
+      }
     }
 
     async function loadPlatformCapabilities() {
@@ -1301,6 +1468,7 @@
           checkReadiness(),
           loadOperationalMetrics(),
           loadPlatformCapabilities(),
+          loadProductCompatibility(),
         ]);
       });
 
@@ -1986,6 +2154,7 @@
           checkReadiness(),
           loadOperationalMetrics(),
           loadPlatformCapabilities(),
+          loadProductCompatibility(),
         ]);
 
         await loadTenantDirectory();

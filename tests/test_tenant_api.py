@@ -2113,5 +2113,87 @@ class TenantApiTests(unittest.TestCase):
                 self.assertIn(marker, dashboard)
 
 
+    def test_bitsagenda_is_compatible_with_stable_capabilities(self):
+        status, body, headers = self.request(
+            (
+                "/api/platform/compatibility"
+                "?product=bitsagenda"
+                "&required=tenant_isolation,"
+                "subscription_usage,"
+                "notification_outbox,"
+                "request_tracing"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["scope"], "platform")
+        self.assertEqual(
+            body["product_key"],
+            "bitsagenda",
+        )
+        self.assertTrue(body["compatible"])
+        self.assertEqual(body["missing"], [])
+        self.assertEqual(
+            len(body["available"]),
+            4,
+        )
+        self.assertEqual(
+            headers["X-Request-ID"],
+            body["request_id"],
+        )
+
+    def test_product_compatibility_reports_missing_capability(self):
+        status, body, _ = self.request(
+            (
+                "/api/platform/compatibility"
+                "?product=bitsagenda"
+                "&required=tenant_isolation,"
+                "calendar_synchronization"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(body["compatible"])
+        self.assertEqual(
+            body["available"],
+            ["tenant_isolation"],
+        )
+        self.assertEqual(
+            body["missing"],
+            ["calendar_synchronization"],
+        )
+
+    def test_product_compatibility_requires_capabilities(self):
+        status, body, _ = self.request(
+            (
+                "/api/platform/compatibility"
+                "?product=bitsagenda"
+            )
+        )
+
+        self.assertEqual(status, 400)
+        self.assertIn("required", body["error"])
+
+    def test_dashboard_has_bitsagenda_compatibility_panel(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            'id="productCompatibilityBadge"',
+            'id="productCompatibilityList"',
+            'id="productCompatibilityStatus"',
+            "async function loadProductCompatibility()",
+            "/api/platform/compatibility",
+            'product: "bitsagenda"',
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()
