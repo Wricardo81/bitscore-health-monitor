@@ -285,6 +285,36 @@ def initialize_database():
         """)
 
         connection.execute("""
+            CREATE TABLE IF NOT EXISTS product_usage_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL,
+                product_key TEXT NOT NULL,
+                metric_key TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                idempotency_key TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (
+                    tenant_id,
+                    product_key,
+                    metric_key,
+                    idempotency_key
+                ),
+                FOREIGN KEY (tenant_id)
+                    REFERENCES usage_counters (tenant_id)
+            )
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS
+                idx_product_usage_tenant_product
+            ON product_usage_events (
+                tenant_id,
+                product_key,
+                metric_key
+            )
+        """)
+
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS subscription_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tenant_id TEXT NOT NULL,
@@ -1003,6 +1033,112 @@ def render_prometheus_metrics(metrics):
     return "\n".join(lines) + "\n"
 
 
+
+def is_valid_usage_key(value):
+    normalized = (
+        value
+        .replace("-", "")
+        .replace("_", "")
+    )
+
+    return (
+        bool(value)
+        and normalized.isalnum()
+        and len(value) <= 50
+    )
+
+
+def record_product_usage(
+    tenant_id,
+    product_key,
+    metric_key,
+    quantity,
+    idempotency_key,
+):
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    with connect_database() as connection:
+        result = connection.execute("""
+            INSERT OR IGNORE INTO product_usage_events (
+                tenant_id,
+                product_key,
+                metric_key,
+                quantity,
+                idempotency_key,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            tenant_id,
+            product_key,
+            metric_key,
+            quantity,
+            idempotency_key,
+            timestamp,
+        ))
+
+        recorded = result.rowcount == 1
+
+        metric_total = connection.execute("""
+            SELECT COALESCE(SUM(quantity), 0)
+            FROM product_usage_events
+            WHERE tenant_id = ?
+              AND product_key = ?
+              AND metric_key = ?
+        """, (
+            tenant_id,
+            product_key,
+            metric_key,
+        )).fetchone()[0]
+
+    return {
+        "tenant_id": tenant_id,
+        "product_key": product_key,
+        "metric_key": metric_key,
+        "quantity": quantity,
+        "recorded": recorded,
+        "metric_total": metric_total,
+    }
+
+
+def get_product_usage_summary(
+    tenant_id,
+    product_key,
+):
+    with connect_database() as connection:
+        rows = connection.execute("""
+            SELECT
+                metric_key,
+                SUM(quantity) AS quantity
+            FROM product_usage_events
+            WHERE tenant_id = ?
+              AND product_key = ?
+            GROUP BY metric_key
+            ORDER BY metric_key
+        """, (
+            tenant_id,
+            product_key,
+        )).fetchall()
+
+    metrics = [
+        {
+            "metric_key": row["metric_key"],
+            "quantity": row["quantity"],
+        }
+        for row in rows
+    ]
+
+    return {
+        "tenant_id": tenant_id,
+        "product_key": product_key,
+        "metrics": metrics,
+        "total_quantity": sum(
+            metric["quantity"]
+            for metric in metrics
+        ),
+    }
+
+
 def get_database_readiness():
     started_at = time.perf_counter()
 
@@ -1709,6 +1845,40 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             })
             return
 
+        if path == "/api/product-usage/summary":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            product_key = str(
+                query.get("product", [""])[0]
+            ).strip().lower()
+
+            if not is_valid_usage_key(product_key):
+                self.send_json(400, {
+                    "error": "product invalido",
+                })
+                return
+
+            summary = get_product_usage_summary(
+                tenant_id,
+                product_key,
+            )
+
+            self.send_json(200, {
+                "scope": "tenant",
+                **summary,
+            })
+            return
+
         if path == "/api/platform/capabilities":
             capabilities = get_platform_capabilities()
 
@@ -2171,6 +2341,84 @@ class SaaSHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path, tenant_id = self.request_data()
+
+        if path == "/api/product-usage/record":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            product_key = str(
+                query.get("product", [""])[0]
+            ).strip().lower()
+
+            metric_key = str(
+                query.get("metric", [""])[0]
+            ).strip().lower()
+
+            try:
+                quantity = int(
+                    query.get("quantity", ["1"])[0]
+                )
+            except (TypeError, ValueError):
+                self.send_json(400, {
+                    "error": "quantity invalida",
+                })
+                return
+
+            idempotency_key = (
+                self.headers.get("Idempotency-Key", "")
+                .strip()
+            )
+
+            if not is_valid_usage_key(product_key):
+                self.send_json(400, {
+                    "error": "product invalido",
+                })
+                return
+
+            if not is_valid_usage_key(metric_key):
+                self.send_json(400, {
+                    "error": "metric invalida",
+                })
+                return
+
+            if quantity < 1 or quantity > 1000:
+                self.send_json(400, {
+                    "error": (
+                        "quantity deve estar entre 1 e 1000"
+                    ),
+                })
+                return
+
+            if not idempotency_key:
+                self.send_json(400, {
+                    "error": (
+                        "Idempotency-Key obrigatoria"
+                    ),
+                })
+                return
+
+            result = record_product_usage(
+                tenant_id,
+                product_key,
+                metric_key,
+                quantity,
+                idempotency_key,
+            )
+
+            self.send_json(
+                201 if result["recorded"] else 200,
+                result,
+            )
+            return
 
         if path == "/api/notifications/dispatch":
             usage = get_usage(tenant_id)

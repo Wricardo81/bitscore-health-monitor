@@ -685,6 +685,36 @@
       color: #64ffda;
     }
 
+
+    .product-usage-demo {
+      margin: 18px 0;
+      padding: 16px;
+      border: 1px solid #233554;
+      border-radius: 14px;
+      background: rgba(13, 31, 56, 0.72);
+    }
+
+    .product-usage-demo-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .product-usage-demo h2 {
+      margin: 0;
+    }
+
+    #productUsageStatus {
+      margin: 12px 0 0;
+      color: #8892b0;
+      font-size: 0.84rem;
+    }
+
+    #productUsageStatus[data-success="true"] {
+      color: #64ffda;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -751,6 +781,30 @@
             aria-live="polite"
         >
             Consulte os recursos liberados para a empresa.
+        </p>
+    </section>
+
+    <section
+        class="product-usage-demo"
+        aria-label="Consumo integrado do BitsAgenda"
+    >
+        <div class="product-usage-demo-header">
+            <h2>Consumo do BitsAgenda</h2>
+
+            <button
+                id="recordProductUsage"
+                type="button"
+            >
+                Simular agendamento
+            </button>
+        </div>
+
+        <p
+            id="productUsageStatus"
+            data-success="false"
+            aria-live="polite"
+        >
+            Nenhum agendamento simulado nesta sessao.
         </p>
     </section>
 
@@ -1258,6 +1312,62 @@
       } catch (error) {
         status.textContent =
           `Falha ao consultar plano: ${error.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function recordBitsAgendaUsage() {
+      const button = document.querySelector(
+        "#recordProductUsage"
+      );
+      const status = document.querySelector(
+        "#productUsageStatus"
+      );
+
+      const operationId = (
+        typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random()}`
+      );
+
+      const endpoint =
+        "/api/product-usage/record" +
+        "?product=bitsagenda" +
+        "&metric=appointments_created" +
+        "&quantity=1";
+
+      button.disabled = true;
+      status.dataset.success = "false";
+      status.textContent =
+        "Registrando consumo do BitsAgenda...";
+
+      try {
+        const response = await fetch(
+          tenantApiUrl(endpoint),
+          {
+            method: "POST",
+            headers: {
+              "Idempotency-Key": operationId,
+            },
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || `HTTP ${response.status}`
+          );
+        }
+
+        status.dataset.success = "true";
+        status.textContent =
+          "appointments_created: " +
+          `${data.metric_total} evento(s).`;
+      } catch (error) {
+        status.textContent =
+          `Falha no consumo: ${error.message}`;
       } finally {
         button.disabled = false;
       }
@@ -2268,6 +2378,13 @@
       .addEventListener(
         "click",
         loadTenantEntitlements
+      );
+
+    document
+      .querySelector("#recordProductUsage")
+      .addEventListener(
+        "click",
+        recordBitsAgendaUsage
       );
 
     initializeDashboard();

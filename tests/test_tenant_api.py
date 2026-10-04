@@ -2311,5 +2311,113 @@ class TenantApiTests(unittest.TestCase):
                 self.assertIn(marker, dashboard)
 
 
+    def test_product_usage_records_metric(self):
+        tenant_id = "tenant-product-usage"
+        self.create_tenant(tenant_id)
+
+        status, body, _ = self.request(
+            (
+                "/api/product-usage/record"
+                f"?tenant_id={tenant_id}"
+                "&product=bitsagenda"
+                "&metric=appointments_created"
+                "&quantity=1"
+            ),
+            method="POST",
+            headers={
+                "Idempotency-Key": "appointment-001",
+            },
+        )
+
+        self.assertEqual(status, 201)
+        self.assertTrue(body["recorded"])
+        self.assertEqual(body["metric_total"], 1)
+        self.assertEqual(
+            body["product_key"],
+            "bitsagenda",
+        )
+
+    def test_product_usage_is_idempotent(self):
+        tenant_id = "tenant-product-idempotent"
+        self.create_tenant(tenant_id)
+
+        endpoint = (
+            "/api/product-usage/record"
+            f"?tenant_id={tenant_id}"
+            "&product=bitsagenda"
+            "&metric=appointments_created"
+            "&quantity=1"
+        )
+
+        headers = {
+            "Idempotency-Key": "appointment-repeated",
+        }
+
+        first_status, first, _ = self.request(
+            endpoint,
+            method="POST",
+            headers=headers,
+        )
+        second_status, second, _ = self.request(
+            endpoint,
+            method="POST",
+            headers=headers,
+        )
+
+        self.assertEqual(first_status, 201)
+        self.assertEqual(second_status, 200)
+        self.assertTrue(first["recorded"])
+        self.assertFalse(second["recorded"])
+        self.assertEqual(second["metric_total"], 1)
+
+    def test_product_usage_remains_tenant_isolated(self):
+        self.create_tenant("tenant-product-alpha")
+        self.create_tenant("tenant-product-beta")
+
+        self.request(
+            (
+                "/api/product-usage/record"
+                "?tenant_id=tenant-product-alpha"
+                "&product=bitsagenda"
+                "&metric=appointments_created"
+            ),
+            method="POST",
+            headers={
+                "Idempotency-Key": "appointment-alpha",
+            },
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/product-usage/summary"
+                "?tenant_id=tenant-product-beta"
+                "&product=bitsagenda"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["total_quantity"], 0)
+        self.assertEqual(body["metrics"], [])
+
+    def test_dashboard_has_product_usage_demo(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            'id="recordProductUsage"',
+            'id="productUsageStatus"',
+            "async function recordBitsAgendaUsage()",
+            "appointments_created",
+            '"Idempotency-Key"',
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()
