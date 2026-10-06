@@ -715,6 +715,44 @@
       color: #64ffda;
     }
 
+
+    .product-heartbeat {
+      margin: 18px 0;
+      padding: 16px;
+      border: 1px solid #233554;
+      border-radius: 14px;
+      background: rgba(13, 31, 56, 0.72);
+    }
+
+    .product-heartbeat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .product-heartbeat-header h2 {
+      margin: 0;
+    }
+
+    #productHeartbeatIndicator {
+      color: #ffd166;
+      font-weight: 700;
+    }
+
+    #productHeartbeatIndicator[data-status="online"] {
+      color: #64ffda;
+    }
+
+    #productHeartbeatIndicator[data-status="degraded"] {
+      color: #ff6b6b;
+    }
+
+    #productHeartbeatStatus {
+      color: #a8b2d1;
+      font-size: 0.84rem;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -927,6 +965,36 @@
         >
             Verificando contrato da plataforma...
         </p>
+    </section>
+
+    <section
+        class="product-heartbeat"
+        aria-label="Heartbeat do BitsAgenda"
+    >
+        <div class="product-heartbeat-header">
+            <h2>Conexao do BitsAgenda</h2>
+
+            <strong
+                id="productHeartbeatIndicator"
+                data-status="unknown"
+            >
+                SEM SINAL
+            </strong>
+        </div>
+
+        <p
+            id="productHeartbeatStatus"
+            aria-live="polite"
+        >
+            Consultando ultimo heartbeat...
+        </p>
+
+        <button
+            id="sendProductHeartbeat"
+            type="button"
+        >
+            Simular heartbeat
+        </button>
     </section>
 
     <section class="usage-card">
@@ -1200,7 +1268,99 @@
         loadSubscriptionSummary(),
         loadPlatformSummary(),
         loadNotificationOutbox(),
+        loadProductHeartbeat(),
       ]);
+    }
+
+    async function loadProductHeartbeat() {
+      const indicator = document.querySelector(
+        "#productHeartbeatIndicator"
+      );
+      const status = document.querySelector(
+        "#productHeartbeatStatus"
+      );
+
+      try {
+        const response = await fetch(
+          tenantApiUrl(
+            "/api/products/heartbeat" +
+            "?product=bitsagenda"
+          )
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || `HTTP ${response.status}`
+          );
+        }
+
+        if (!data.connected) {
+          indicator.dataset.status = "unknown";
+          indicator.textContent = "SEM SINAL";
+          status.textContent =
+            "BitsAgenda ainda nao enviou heartbeat.";
+          return;
+        }
+
+        const heartbeat = data.heartbeat;
+
+        indicator.dataset.status = heartbeat.status;
+        indicator.textContent =
+          heartbeat.status.toUpperCase();
+
+        status.textContent =
+          `Versao ${heartbeat.product_version}` +
+          ` | Ultimo sinal: ${heartbeat.last_seen_at}`;
+      } catch (error) {
+        indicator.dataset.status = "degraded";
+        indicator.textContent = "ERRO";
+        status.textContent =
+          `Falha no heartbeat: ${error.message}`;
+      }
+    }
+
+
+    async function sendProductHeartbeat() {
+      const button = document.querySelector(
+        "#sendProductHeartbeat"
+      );
+
+      button.disabled = true;
+      button.textContent = "Enviando...";
+
+      try {
+        const response = await fetch(
+          tenantApiUrl(
+            "/api/products/heartbeat" +
+            "?product=bitsagenda" +
+            "&version=demo-1.0.0" +
+            "&status=online"
+          ),
+          {
+            method: "POST",
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || `HTTP ${response.status}`
+          );
+        }
+
+        await loadProductHeartbeat();
+      } catch (error) {
+        document.querySelector(
+          "#productHeartbeatStatus"
+        ).textContent =
+          `Falha ao enviar heartbeat: ${error.message}`;
+      } finally {
+        button.disabled = false;
+        button.textContent = "Simular heartbeat";
+      }
     }
 
     async function loadProductCompatibility() {
@@ -2352,6 +2512,13 @@
     document
     .querySelector("#upgrade")
     .addEventListener("click", upgradePlan);
+
+    document
+      .querySelector("#sendProductHeartbeat")
+      .addEventListener(
+        "click",
+        sendProductHeartbeat
+      );
 
     async function initializeDashboard() {
       try {

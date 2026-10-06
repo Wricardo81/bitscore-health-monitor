@@ -315,6 +315,30 @@ def initialize_database():
         """)
 
         connection.execute("""
+            CREATE TABLE IF NOT EXISTS product_heartbeats (
+                tenant_id TEXT NOT NULL,
+                product_key TEXT NOT NULL,
+                product_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                PRIMARY KEY (tenant_id, product_key),
+                FOREIGN KEY (tenant_id)
+                    REFERENCES usage_counters (tenant_id)
+            )
+        """)
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS
+                idx_product_heartbeats_status
+            ON product_heartbeats (
+                tenant_id,
+                status,
+                last_seen_at
+            )
+        """)
+
+        connection.execute("""
             CREATE TABLE IF NOT EXISTS subscription_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tenant_id TEXT NOT NULL,
@@ -1247,6 +1271,97 @@ def get_platform_summary():
     }
 
 
+
+def serialize_product_heartbeat(row):
+    if row is None:
+        return None
+
+    return {
+        "tenant_id": row["tenant_id"],
+        "product_key": row["product_key"],
+        "product_version": row["product_version"],
+        "status": row["status"],
+        "first_seen_at": row["first_seen_at"],
+        "last_seen_at": row["last_seen_at"],
+    }
+
+
+def record_product_heartbeat(
+    tenant_id,
+    product_key,
+    product_version,
+    status,
+):
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    with connect_database() as connection:
+        connection.execute("""
+            INSERT INTO product_heartbeats (
+                tenant_id,
+                product_key,
+                product_version,
+                status,
+                first_seen_at,
+                last_seen_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (tenant_id, product_key)
+            DO UPDATE SET
+                product_version = excluded.product_version,
+                status = excluded.status,
+                last_seen_at = excluded.last_seen_at
+        """, (
+            tenant_id,
+            product_key,
+            product_version,
+            status,
+            timestamp,
+            timestamp,
+        ))
+
+        heartbeat = connection.execute("""
+            SELECT
+                tenant_id,
+                product_key,
+                product_version,
+                status,
+                first_seen_at,
+                last_seen_at
+            FROM product_heartbeats
+            WHERE tenant_id = ?
+              AND product_key = ?
+        """, (
+            tenant_id,
+            product_key,
+        )).fetchone()
+
+    return serialize_product_heartbeat(heartbeat)
+
+
+def get_product_heartbeat(
+    tenant_id,
+    product_key,
+):
+    with connect_database() as connection:
+        heartbeat = connection.execute("""
+            SELECT
+                tenant_id,
+                product_key,
+                product_version,
+                status,
+                first_seen_at,
+                last_seen_at
+            FROM product_heartbeats
+            WHERE tenant_id = ?
+              AND product_key = ?
+        """, (
+            tenant_id,
+            product_key,
+        )).fetchone()
+
+    return serialize_product_heartbeat(heartbeat)
+
+
 def list_tenants():
     with connect_database() as connection:
         rows = connection.execute("""
@@ -1771,6 +1886,51 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             })
             return
 
+
+        if path == "/api/products/heartbeat":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            product_key = str(
+                query.get("product", [""])[0]
+            ).strip().lower()
+
+            normalized_product = (
+                product_key
+                .replace("-", "")
+                .replace("_", "")
+            )
+
+            if (
+                not product_key
+                or not normalized_product.isalnum()
+            ):
+                self.send_json(400, {
+                    "error": "product invalido",
+                })
+                return
+
+            heartbeat = get_product_heartbeat(
+                tenant_id,
+                product_key,
+            )
+
+            self.send_json(200, {
+                "tenant_id": tenant_id,
+                "product_key": product_key,
+                "connected": heartbeat is not None,
+                "heartbeat": heartbeat,
+            })
+            return
 
         if path == "/api/platform/compatibility":
             query = parse_qs(
@@ -2437,6 +2597,80 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                 "tenant_id": tenant_id,
                 "dispatched": notification is not None,
                 "notification": notification,
+            })
+            return
+
+        if path == "/api/products/heartbeat":
+            usage = get_usage(tenant_id)
+
+            if usage is None:
+                self.send_json(404, {
+                    "error": "Empresa nao encontrada",
+                })
+                return
+
+            query = parse_qs(
+                urlparse(self.path).query
+            )
+
+            product_key = str(
+                query.get("product", [""])[0]
+            ).strip().lower()
+
+            product_version = str(
+                query.get("version", [""])[0]
+            ).strip()
+
+            status = str(
+                query.get("status", ["online"])[0]
+            ).strip().lower()
+
+            normalized_product = (
+                product_key
+                .replace("-", "")
+                .replace("_", "")
+            )
+
+            if (
+                not product_key
+                or not normalized_product.isalnum()
+            ):
+                self.send_json(400, {
+                    "error": "product invalido",
+                })
+                return
+
+            if (
+                not product_version
+                or len(product_version) > 40
+            ):
+                self.send_json(400, {
+                    "error": "version invalida",
+                })
+                return
+
+            if status not in {
+                "online",
+                "degraded",
+            }:
+                self.send_json(400, {
+                    "error": (
+                        "status deve ser online "
+                        "ou degraded"
+                    ),
+                })
+                return
+
+            heartbeat = record_product_heartbeat(
+                tenant_id,
+                product_key,
+                product_version,
+                status,
+            )
+
+            self.send_json(201, {
+                "message": "Heartbeat registrado",
+                "heartbeat": heartbeat,
             })
             return
 
