@@ -2419,5 +2419,118 @@ class TenantApiTests(unittest.TestCase):
                 self.assertIn(marker, dashboard)
 
 
+    def test_product_heartbeat_records_status(self):
+        tenant_id = "tenant-heartbeat-created"
+        self.create_tenant(tenant_id)
+
+        status, body, _ = self.request(
+            (
+                "/api/products/heartbeat"
+                f"?tenant_id={tenant_id}"
+                "&product=bitsagenda"
+                "&version=1.0.0"
+                "&status=online"
+            ),
+            method="POST",
+        )
+
+        self.assertEqual(status, 201)
+        self.assertEqual(
+            body["heartbeat"]["product_key"],
+            "bitsagenda",
+        )
+        self.assertEqual(
+            body["heartbeat"]["status"],
+            "online",
+        )
+        self.assertEqual(
+            body["heartbeat"]["product_version"],
+            "1.0.0",
+        )
+
+    def test_product_heartbeat_updates_existing_product(self):
+        tenant_id = "tenant-heartbeat-update"
+        self.create_tenant(tenant_id)
+
+        endpoint = (
+            "/api/products/heartbeat"
+            f"?tenant_id={tenant_id}"
+            "&product=bitsagenda"
+        )
+
+        self.request(
+            endpoint
+            + "&version=1.0.0"
+            + "&status=online",
+            method="POST",
+        )
+
+        self.request(
+            endpoint
+            + "&version=1.1.0"
+            + "&status=degraded",
+            method="POST",
+        )
+
+        status, body, _ = self.request(endpoint)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(body["connected"])
+        self.assertEqual(
+            body["heartbeat"]["product_version"],
+            "1.1.0",
+        )
+        self.assertEqual(
+            body["heartbeat"]["status"],
+            "degraded",
+        )
+
+    def test_product_heartbeat_remains_tenant_isolated(self):
+        self.create_tenant("tenant-heartbeat-alpha")
+        self.create_tenant("tenant-heartbeat-beta")
+
+        self.request(
+            (
+                "/api/products/heartbeat"
+                "?tenant_id=tenant-heartbeat-alpha"
+                "&product=bitsagenda"
+                "&version=1.0.0"
+                "&status=online"
+            ),
+            method="POST",
+        )
+
+        status, body, _ = self.request(
+            (
+                "/api/products/heartbeat"
+                "?tenant_id=tenant-heartbeat-beta"
+                "&product=bitsagenda"
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertFalse(body["connected"])
+        self.assertIsNone(body["heartbeat"])
+
+    def test_dashboard_has_product_heartbeat_panel(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            'id="productHeartbeatIndicator"',
+            'id="sendProductHeartbeat"',
+            "async function loadProductHeartbeat()",
+            "async function sendProductHeartbeat()",
+            "/api/products/heartbeat",
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()
