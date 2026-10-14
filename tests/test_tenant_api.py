@@ -2694,5 +2694,44 @@ class TenantApiTests(unittest.TestCase):
                 self.assertIn(marker, dashboard)
 
 
+    def test_build_metadata_exposes_release_identity(self):
+        status, body, headers = self.request(
+            "/api/build"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body["service"],
+            "BitsCore API",
+        )
+        self.assertTrue(body["version"])
+        self.assertTrue(body["commit"])
+        self.assertTrue(body["environment"])
+        self.assertLessEqual(len(body["commit"]), 80)
+        self.assertEqual(
+            headers["X-Request-ID"],
+            body["request_id"],
+        )
+
+    def test_dashboard_displays_build_metadata(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            'id="buildMetadata"',
+            "async function loadBuildInfo()",
+            'fetch("/api/build")',
+            "data.environment",
+            "loadBuildInfo();",
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()
