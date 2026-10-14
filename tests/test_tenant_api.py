@@ -2650,5 +2650,49 @@ class TenantApiTests(unittest.TestCase):
                 self.assertIn(marker, dashboard)
 
 
+    def test_product_heartbeat_recommends_refresh_interval(self):
+        tenant_id = "tenant-heartbeat-refresh"
+        self.create_tenant(tenant_id)
+
+        status, body, _ = self.request(
+            (
+                "/api/products/heartbeat"
+                f"?tenant_id={tenant_id}"
+                "&product=bitsagenda"
+                "&version=1.3.0"
+                "&status=online"
+            ),
+            method="POST",
+        )
+
+        heartbeat = body["heartbeat"]
+
+        self.assertEqual(status, 201)
+        self.assertEqual(
+            heartbeat["refresh_after_seconds"],
+            30,
+        )
+
+    def test_dashboard_has_adaptive_heartbeat_polling(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            "productHeartbeatTimer",
+            "scheduleProductHeartbeatRefresh",
+            "refresh_after_seconds",
+            '"visibilitychange"',
+            "document.hidden",
+            "window.setTimeout",
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()

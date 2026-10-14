@@ -1276,6 +1276,31 @@
       ]);
     }
 
+    let productHeartbeatTimer = null;
+
+
+    function scheduleProductHeartbeatRefresh(
+      seconds = 30
+    ) {
+      window.clearTimeout(productHeartbeatTimer);
+
+      if (document.hidden) {
+        productHeartbeatTimer = null;
+        return;
+      }
+
+      const safeSeconds = Math.max(
+        10,
+        Number(seconds) || 30
+      );
+
+      productHeartbeatTimer = window.setTimeout(
+        loadProductHeartbeat,
+        safeSeconds * 1000
+      );
+    }
+
+
     async function loadProductHeartbeat() {
       const indicator = document.querySelector(
         "#productHeartbeatIndicator"
@@ -1299,6 +1324,10 @@
             data.error || `HTTP ${response.status}`
           );
         }
+
+        scheduleProductHeartbeatRefresh(
+          data.heartbeat?.refresh_after_seconds ?? 30
+        );
 
         if (!data.connected) {
           indicator.dataset.status = "unknown";
@@ -1324,6 +1353,8 @@
         indicator.textContent = "ERRO";
         status.textContent =
           `Falha no heartbeat: ${error.message}`;
+
+        scheduleProductHeartbeatRefresh(60);
       }
     }
 
@@ -2518,6 +2549,21 @@
     document
     .querySelector("#upgrade")
     .addEventListener("click", upgradePlan);
+
+    document.addEventListener(
+      "visibilitychange",
+      () => {
+        if (document.hidden) {
+          window.clearTimeout(
+            productHeartbeatTimer
+          );
+          productHeartbeatTimer = null;
+          return;
+        }
+
+        loadProductHeartbeat();
+      }
+    );
 
     document
       .querySelector("#sendProductHeartbeat")
