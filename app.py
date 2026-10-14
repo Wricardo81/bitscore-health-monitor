@@ -17,6 +17,8 @@ DATABASE = os.getenv(
 HOST = os.getenv("BITSCORE_HOST", "127.0.0.1")
 PORT = int(os.getenv("BITSCORE_PORT", "8010"))
 START_TIME = time.time()
+HEARTBEAT_DEGRADED_AFTER_SECONDS = 90
+HEARTBEAT_OFFLINE_AFTER_SECONDS = 300
 PLATFORM_VERSION = "1.4.0"
 API_VERSION = "v1"
 
@@ -1272,15 +1274,70 @@ def get_platform_summary():
 
 
 
+def classify_product_heartbeat(
+    last_seen_at,
+    reported_status="online",
+    now=None,
+):
+    observed_at = datetime.fromisoformat(
+        last_seen_at
+    )
+
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(
+            tzinfo=timezone.utc
+        )
+
+    reference_time = (
+        now
+        if now is not None
+        else datetime.now(timezone.utc)
+    )
+
+    age_seconds = max(
+        0,
+        int(
+            (
+                reference_time - observed_at
+            ).total_seconds()
+        ),
+    )
+
+    if age_seconds >= HEARTBEAT_OFFLINE_AFTER_SECONDS:
+        connection_status = "offline"
+    elif (
+        reported_status == "degraded"
+        or age_seconds
+        >= HEARTBEAT_DEGRADED_AFTER_SECONDS
+    ):
+        connection_status = "degraded"
+    else:
+        connection_status = "online"
+
+    return {
+        "connection_status": connection_status,
+        "age_seconds": age_seconds,
+    }
+
+
 def serialize_product_heartbeat(row):
     if row is None:
         return None
+
+    freshness = classify_product_heartbeat(
+        row["last_seen_at"],
+        row["status"],
+    )
 
     return {
         "tenant_id": row["tenant_id"],
         "product_key": row["product_key"],
         "product_version": row["product_version"],
         "status": row["status"],
+        "connection_status": (
+            freshness["connection_status"]
+        ),
+        "age_seconds": freshness["age_seconds"],
         "first_seen_at": row["first_seen_at"],
         "last_seen_at": row["last_seen_at"],
     }
