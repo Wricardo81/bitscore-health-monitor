@@ -21,6 +21,18 @@ HEARTBEAT_DEGRADED_AFTER_SECONDS = 90
 HEARTBEAT_OFFLINE_AFTER_SECONDS = 300
 PRODUCT_HEARTBEAT_REFRESH_SECONDS = 30
 PLATFORM_VERSION = "1.4.0"
+
+BUILD_COMMIT = (
+    os.getenv("BITSCORE_BUILD_COMMIT", "development")
+    .strip()[:80]
+    or "development"
+)
+BUILD_ENVIRONMENT = (
+    os.getenv("BITSCORE_ENVIRONMENT", "local")
+    .strip().lower()[:40]
+    or "local"
+)
+
 API_VERSION = "v1"
 
 PLATFORM_CAPABILITIES = [
@@ -1917,6 +1929,15 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                     "charset=utf-8"
                 ),
             )
+            return
+
+        if path == "/api/build":
+            self.send_json(200, {
+                "service": "BitsCore API",
+                "version": PLATFORM_VERSION,
+                "commit": BUILD_COMMIT,
+                "environment": BUILD_ENVIRONMENT,
+            })
             return
 
         if path == "/api/ready":
