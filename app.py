@@ -19,6 +19,7 @@ PORT = int(os.getenv("BITSCORE_PORT", "8010"))
 START_TIME = time.time()
 HEARTBEAT_DEGRADED_AFTER_SECONDS = 90
 HEARTBEAT_OFFLINE_AFTER_SECONDS = 300
+PRODUCT_HEARTBEAT_REFRESH_SECONDS = 30
 PLATFORM_VERSION = "1.4.0"
 API_VERSION = "v1"
 
@@ -1338,6 +1339,9 @@ def serialize_product_heartbeat(row):
             freshness["connection_status"]
         ),
         "age_seconds": freshness["age_seconds"],
+        "refresh_after_seconds": (
+            PRODUCT_HEARTBEAT_REFRESH_SECONDS
+        ),
         "first_seen_at": row["first_seen_at"],
         "last_seen_at": row["last_seen_at"],
     }
