@@ -2532,5 +2532,123 @@ class TenantApiTests(unittest.TestCase):
                 self.assertIn(marker, dashboard)
 
 
+    def test_product_heartbeat_api_reports_online_connection(self):
+        tenant_id = "tenant-heartbeat-fresh-online"
+        self.create_tenant(tenant_id)
+
+        status, body, _ = self.request(
+            (
+                "/api/products/heartbeat"
+                f"?tenant_id={tenant_id}"
+                "&product=bitsagenda"
+                "&version=1.2.0"
+                "&status=online"
+            ),
+            method="POST",
+        )
+
+        heartbeat = body["heartbeat"]
+
+        self.assertEqual(status, 201)
+        self.assertEqual(
+            heartbeat["connection_status"],
+            "online",
+        )
+        self.assertGreaterEqual(
+            heartbeat["age_seconds"],
+            0,
+        )
+        self.assertLess(
+            heartbeat["age_seconds"],
+            90,
+        )
+
+    def test_product_heartbeat_classifies_stale_and_offline(self):
+        from datetime import (
+            datetime,
+            timedelta,
+            timezone,
+        )
+
+        from app import classify_product_heartbeat
+
+        now = datetime(
+            2026,
+            10,
+            8,
+            12,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        cases = [
+            (
+                now - timedelta(seconds=120),
+                "degraded",
+            ),
+            (
+                now - timedelta(seconds=360),
+                "offline",
+            ),
+        ]
+
+        for last_seen, expected in cases:
+            with self.subTest(expected=expected):
+                result = classify_product_heartbeat(
+                    last_seen.isoformat(),
+                    "online",
+                    now,
+                )
+
+                self.assertEqual(
+                    result["connection_status"],
+                    expected,
+                )
+
+    def test_reported_degraded_status_is_preserved(self):
+        from datetime import datetime, timezone
+
+        from app import classify_product_heartbeat
+
+        now = datetime(
+            2026,
+            10,
+            8,
+            12,
+            0,
+            tzinfo=timezone.utc,
+        )
+
+        result = classify_product_heartbeat(
+            now.isoformat(),
+            "degraded",
+            now,
+        )
+
+        self.assertEqual(
+            result["connection_status"],
+            "degraded",
+        )
+        self.assertEqual(result["age_seconds"], 0)
+
+    def test_dashboard_displays_heartbeat_freshness(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            'data-status="offline"',
+            "heartbeat.connection_status",
+            "heartbeat.age_seconds",
+            "Sinal ha",
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()

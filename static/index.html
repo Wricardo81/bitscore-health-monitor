@@ -745,6 +745,10 @@
     }
 
     #productHeartbeatIndicator[data-status="degraded"] {
+      color: #ffd166;
+    }
+
+    #productHeartbeatIndicator[data-status="offline"] {
       color: #ff6b6b;
     }
 
@@ -1306,13 +1310,15 @@
 
         const heartbeat = data.heartbeat;
 
-        indicator.dataset.status = heartbeat.status;
+        indicator.dataset.status =
+          heartbeat.connection_status;
         indicator.textContent =
-          heartbeat.status.toUpperCase();
+          heartbeat.connection_status.toUpperCase();
 
         status.textContent =
           `Versao ${heartbeat.product_version}` +
-          ` | Ultimo sinal: ${heartbeat.last_seen_at}`;
+          ` | Sinal ha ${heartbeat.age_seconds}s` +
+          ` | Reportado: ${heartbeat.status}`;
       } catch (error) {
         indicator.dataset.status = "degraded";
         indicator.textContent = "ERRO";
