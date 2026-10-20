@@ -3,6 +3,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from math import ceil
 from urllib.parse import parse_qs, urlparse
 import csv
+import hmac
 import io
 import json
 import os
@@ -20,6 +21,10 @@ START_TIME = time.time()
 HEARTBEAT_DEGRADED_AFTER_SECONDS = 90
 HEARTBEAT_OFFLINE_AFTER_SECONDS = 300
 PRODUCT_HEARTBEAT_REFRESH_SECONDS = 30
+PRODUCT_API_KEY = os.getenv(
+    "BITSCORE_PRODUCT_API_KEY",
+    "",
+).strip()
 PLATFORM_VERSION = "1.4.0"
 
 BUILD_COMMIT = (
@@ -1789,6 +1794,32 @@ class SaaSHandler(SimpleHTTPRequestHandler):
         self.request_started_at = time.perf_counter()
         super().__init__(*args, directory="static", **kwargs)
 
+    def require_product_api_key(self):
+        if not PRODUCT_API_KEY:
+            return True
+
+        provided_key = self.headers.get(
+            "X-BitsCore-Product-Key",
+            "",
+        ).strip()
+
+        if (
+            provided_key
+            and hmac.compare_digest(
+                provided_key,
+                PRODUCT_API_KEY,
+            )
+        ):
+            return True
+
+        self.send_json(401, {
+            "error": (
+                "Chave de integracao ausente "
+                "ou invalida"
+            ),
+        })
+        return False
+
     def get_server_timing(self):
         duration_ms = (
             time.perf_counter()
@@ -1929,6 +1960,18 @@ class SaaSHandler(SimpleHTTPRequestHandler):
                     "charset=utf-8"
                 ),
             )
+            return
+
+        if path == "/api/platform/security":
+            self.send_json(200, {
+                "scope": "platform",
+                "product_api_auth": {
+                    "enabled": bool(PRODUCT_API_KEY),
+                    "header": (
+                        "X-BitsCore-Product-Key"
+                    ),
+                },
+            })
             return
 
         if path == "/api/build":
@@ -2585,6 +2628,9 @@ class SaaSHandler(SimpleHTTPRequestHandler):
         path, tenant_id = self.request_data()
 
         if path == "/api/product-usage/record":
+            if not self.require_product_api_key():
+                return
+
             usage = get_usage(tenant_id)
 
             if usage is None:
@@ -2683,6 +2729,9 @@ class SaaSHandler(SimpleHTTPRequestHandler):
             return
 
         if path == "/api/products/heartbeat":
+            if not self.require_product_api_key():
+                return
+
             usage = get_usage(tenant_id)
 
             if usage is None:
