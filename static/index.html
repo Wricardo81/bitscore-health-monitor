@@ -1847,7 +1847,15 @@
         const enabled =
           data.product_api_auth.enabled;
 
-        status.dataset.enabled = String(enabled);
+        const productApiHeader =
+              data.product_api_auth.header ||
+              "X-BitsCore-Product-Key";
+
+            status.title = enabled
+              ? `Cabecalho esperado: ${productApiHeader}`
+              : "Autenticacao desativada no modo local.";
+
+            status.dataset.enabled = String(enabled);
         status.textContent = enabled
           ? "Integra??es de produtos protegidas por API key."
           : "Modo local: autentica??o de produtos desativada.";
