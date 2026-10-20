@@ -2733,5 +2733,162 @@ class TenantApiTests(unittest.TestCase):
                 self.assertIn(marker, dashboard)
 
 
+    def test_product_endpoints_require_configured_api_key(self):
+        port = available_port()
+
+        with tempfile.TemporaryDirectory() as directory:
+            environment = os.environ.copy()
+            environment["BITSCORE_PORT"] = str(port)
+            environment["BITSCORE_DATABASE"] = str(
+                Path(directory) / "protected.db"
+            )
+            environment["BITSCORE_PRODUCT_API_KEY"] = (
+                "test-product-secret"
+            )
+
+            process = subprocess.Popen(
+                [sys.executable, "app.py"],
+                cwd=PROJECT_ROOT,
+                env=environment,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+            base_url = f"http://127.0.0.1:{port}"
+
+            def local_request(
+                path,
+                method="GET",
+                headers=None,
+            ):
+                request = Request(
+                    base_url + path,
+                    headers=dict(headers or {}),
+                    method=method,
+                )
+
+                try:
+                    response = urlopen(
+                        request,
+                        timeout=3,
+                    )
+                except HTTPError as error:
+                    response = error
+
+                try:
+                    return (
+                        response.status,
+                        json.loads(
+                            response.read().decode(
+                                "utf-8"
+                            )
+                        ),
+                    )
+                finally:
+                    response.close()
+
+            try:
+                for _ in range(50):
+                    try:
+                        status, _ = local_request(
+                            "/api/health"
+                        )
+
+                        if status == 200:
+                            break
+                    except Exception:
+                        time.sleep(0.1)
+                else:
+                    self.fail(
+                        "Servidor protegido nao iniciou."
+                    )
+
+                status, security = local_request(
+                    "/api/platform/security"
+                )
+
+                self.assertEqual(status, 200)
+                self.assertTrue(
+                    security[
+                        "product_api_auth"
+                    ]["enabled"]
+                )
+
+                heartbeat_endpoint = (
+                    "/api/products/heartbeat"
+                    "?tenant_id=engenharia-de-bits"
+                    "&product=bitsagenda"
+                    "&version=2.0.0"
+                    "&status=online"
+                )
+
+                unauthorized, _ = local_request(
+                    heartbeat_endpoint,
+                    method="POST",
+                )
+
+                authorized, body = local_request(
+                    heartbeat_endpoint,
+                    method="POST",
+                    headers={
+                        "X-BitsCore-Product-Key": (
+                            "test-product-secret"
+                        ),
+                    },
+                )
+
+                self.assertEqual(unauthorized, 401)
+                self.assertEqual(authorized, 201)
+                self.assertEqual(
+                    body["heartbeat"]["product_key"],
+                    "bitsagenda",
+                )
+
+                usage_status, _ = local_request(
+                    (
+                        "/api/product-usage/record"
+                        "?tenant_id=engenharia-de-bits"
+                        "&product=bitsagenda"
+                        "&metric=appointments_created"
+                    ),
+                    method="POST",
+                    headers={
+                        "Idempotency-Key": "protected-1",
+                    },
+                )
+
+                self.assertEqual(usage_status, 401)
+
+            finally:
+                process.terminate()
+
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+
+    def test_dashboard_displays_product_security(self):
+        dashboard = (
+            PROJECT_ROOT
+            / "static"
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        required_markers = [
+            'id="productSecurityStatus"',
+            "async function loadProductSecurity()",
+            'fetch(',
+            '"/api/platform/security"',
+            "product_api_auth.enabled",
+            "X-BitsCore-Product-Key",
+        ]
+
+        for marker in required_markers:
+            with self.subTest(marker=marker):
+                self.assertIn(marker, dashboard)
+
+
 if __name__ == "__main__":
     unittest.main()

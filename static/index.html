@@ -769,6 +769,22 @@
       font-weight: 600;
     }
 
+
+    .product-security-status {
+      margin: 14px 0;
+      padding: 12px;
+      border: 1px solid #233554;
+      border-radius: 12px;
+      color: #a8b2d1;
+      background: #0d1f38;
+      font-size: 0.82rem;
+    }
+
+    .product-security-status[data-enabled="true"] {
+      border-color: #64ffda;
+      color: #64ffda;
+    }
+
   </style>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 </head>
@@ -1210,6 +1226,15 @@
             </button>
         </div>
     </section>
+
+    <p
+        id="productSecurityStatus"
+        class="product-security-status"
+        data-enabled="checking"
+        aria-live="polite"
+    >
+        Verificando autenticacao dos produtos...
+    </p>
 
     <button id="refresh">Verificar novamente</button>
   </main>
@@ -1801,6 +1826,51 @@
           `Falha no readiness: ${error.message}`;
       }
     }
+
+    async function loadProductSecurity() {
+      const status = document.querySelector(
+        "#productSecurityStatus"
+      );
+
+      try {
+        const response = await fetch(
+          "/api/platform/security"
+        );
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || `HTTP ${response.status}`
+          );
+        }
+
+        const enabled =
+          data.product_api_auth.enabled;
+
+        status.dataset.enabled = String(enabled);
+        status.textContent = enabled
+          ? "Integra??es de produtos protegidas por API key."
+          : "Modo local: autentica??o de produtos desativada.";
+
+        for (const selector of [
+          "#sendProductHeartbeat",
+          "#recordProductUsage",
+        ]) {
+          const button = document.querySelector(selector);
+
+          if (button && enabled) {
+            button.disabled = true;
+            button.title =
+              "Envio permitido apenas pelo backend do produto.";
+          }
+        }
+      } catch (error) {
+        status.dataset.enabled = "false";
+        status.textContent =
+          `Falha na seguran?a: ${error.message}`;
+      }
+    }
+
 
     async function loadBuildInfo() {
       const status = document.querySelector(
@@ -2653,6 +2723,7 @@
         recordBitsAgendaUsage
       );
 
+    loadProductSecurity();
     loadBuildInfo();
     initializeDashboard();
   </script>
